@@ -1,0 +1,17 @@
+# Render の設定(編集の保存先サーバー)。https://render.com/deploy?repo=https://github.com/issei8090-coder/keikyu-haisen から作る
+services:
+  - type: web
+    name: keikyu-haisen
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: echo ok
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: EDIT_KEY
+        sync: false
+      - key: ALLOWED_ORIGIN
+        value: https://issei8090-coder.github.io
