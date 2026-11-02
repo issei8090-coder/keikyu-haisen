@@ -1,0 +1,6 @@
+line,from_station,to_station,from_cumulative_km,to_cumulative_km,distance_km,source,status
+京成押上線,押上,京成曳舟,0.0,1.1,1.1,Keisei fare distance table KS45 Oshiage (2025-04-01),official fare km
+京成押上線,京成曳舟,八広,1.1,2.3,1.2,Keisei fare distance table KS45 Oshiage (2025-04-01),official fare km
+京成押上線,八広,四ツ木,2.3,3.1,0.8,Keisei fare distance table KS45 Oshiage (2025-04-01),official fare km
+京成押上線,四ツ木,京成立石,3.1,4.6,1.5,Keisei fare distance table KS45 Oshiage (2025-04-01),official fare km
+京成押上線,京成立石,青砥,4.6,5.7,1.1,Keisei fare distance table KS45 Oshiage (2025-04-01),official fare km

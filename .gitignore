@@ -1,0 +1,16 @@
+# 作業用(公開しない)
+agents/
+tmp/
+preview_*.html
+build/_tmp/
+build/nul
+build/odpt_key.txt
+build/asa/
+build/ks/
+build/dl_sky/
+build/ops/
+build/ops_user.json
+*.bak
+*.orig
+*.before*
+node_modules/

@@ -1,0 +1,6 @@
+line,from_station,to_station,from_cumulative_km,to_cumulative_km,distance_km,source,status
+京成千原線,千葉中央,千葉寺,0.0,2.5,2.5,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千原線,千葉寺,大森台,2.5,4.2,1.7,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千原線,大森台,学園前,4.2,7.3,3.1,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千原線,学園前,おゆみ野,7.3,8.8,1.5,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千原線,おゆみ野,ちはら台,8.8,10.9,2.1,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km

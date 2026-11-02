@@ -1,0 +1,22 @@
+﻿route,from_station,to_station,from_station_source,to_station_source,down_liner8,down_limited_express6,down_rapid4,down_local1,up_liner8,up_limited_express6,up_rapid4,up_local1,source_basis,confidence
+Oshiage,押上,京成曳舟,押上,曳舟,,75,75,75,,75,75,70,fan table based on timetable No.22,unverified historical candidate
+Oshiage,京成曳舟,八広,曳舟,八広,,95,95,75,,105,105,90,fan table based on timetable No.22,unverified historical candidate
+Oshiage,八広,四ツ木,八広,四ツ木,,95,95,75,,100,100,75,fan table based on timetable No.22,unverified historical candidate
+Oshiage,四ツ木,京成立石,四ツ木,立石,,95,95,90,,90,90,90,fan table based on timetable No.22,unverified historical candidate
+Oshiage,京成立石,青砥,立石,青砥,,75,75,75,,70,70,70,fan table based on timetable No.22,unverified historical candidate
+Chiba,京成津田沼,幕張本郷,京成津田沼,幕張本郷,,95,,95,,95,,90,fan table based on timetable No.22,unverified historical candidate
+Chiba,幕張本郷,幕張,幕張本郷,幕張,,95,,95,,95,,90,fan table based on timetable No.22,unverified historical candidate
+Chiba,幕張,検見川,幕張,検見川,,90,,85,,95,,80,fan table based on timetable No.22,unverified historical candidate
+Chiba,検見川,稲毛,検見川,稲毛,,95,,90,,95,,95,fan table based on timetable No.22,unverified historical candidate
+Chiba,稲毛,みどり台,稲毛,みどり台,,90,,90,,90,,90,fan table based on timetable No.22,unverified historical candidate
+Chiba,みどり台,西登戸,みどり台,登戸,,80,,80,,85,,80,fan table based on timetable No.22,unverified historical candidate
+Chiba,西登戸,新千葉,登戸,西千葉,,85,,75,,90,,75,fan table based on timetable No.22,unverified historical candidate
+Chiba,新千葉,京成千葉,西千葉,千葉,,75,,50,,70,,55,fan table based on timetable No.22,unverified historical candidate
+Chiba,京成千葉,千葉中央,千葉,千葉中央,,50,,50,,55,,55,fan table based on timetable No.22,unverified historical candidate
+Chihara,千葉中央,千葉寺,千葉中央,千葉寺,,,,90,,,,85,fan table based on timetable No.22,unverified historical candidate
+Chihara,千葉寺,大森台,千葉寺,大森台,,,,90,,,,90,fan table based on timetable No.22,unverified historical candidate
+Chihara,大森台,学園前,大森台,学園前,,,,100,,,,100,fan table based on timetable No.22,unverified historical candidate
+Chihara,学園前,おゆみ野,学園前,おゆみ野,,,,90,,,,90,fan table based on timetable No.22,unverified historical candidate
+Chihara,おゆみ野,ちはら台,おゆみ野,ちはら台,,,,90,,,,85,fan table based on timetable No.22,unverified historical candidate
+HigashiNarita,京成成田,東成田,京成成田,東成田,,105,,105,,105,,105,BosoView timetable No.22-era station-pair table,unverified historical candidate
+Shibayama,東成田,芝山千代田,東成田,芝山千代田,,,,80,,,,80,BosoView timetable No.22-era station-pair table,unverified historical candidate

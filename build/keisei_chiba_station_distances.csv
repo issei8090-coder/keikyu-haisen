@@ -1,0 +1,5 @@
+line,from_station,to_station,from_cumulative_km,to_cumulative_km,distance_km,source,status
+京成千葉線,みどり台,西登戸,0.0,1.0,1.0,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千葉線,西登戸,新千葉,1.0,1.8,0.8,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千葉線,新千葉,京成千葉,1.8,2.4,0.6,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km
+京成千葉線,京成千葉,千葉中央,2.4,3.0,0.6,Keisei fare distance table KS60 Chiba-Chuo (2025-04-01),official fare km

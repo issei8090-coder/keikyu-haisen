@@ -1,0 +1,18 @@
+line,from_station,to_station,from_cumulative_km,to_cumulative_km,distance_km,source,status
+Narita Sky Access / Hokuso,京成高砂,新柴又,0.0,1.3,1.3,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,新柴又,矢切,1.3,3.2,1.9,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,矢切,北国分,3.2,4.7,1.5,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,北国分,秋山,4.7,6.2,1.5,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,秋山,東松戸,6.2,7.5,1.3,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,東松戸,松飛台,7.5,8.9,1.4,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,松飛台,大町,8.9,10.4,1.5,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,大町,新鎌ヶ谷,10.4,12.7,2.3,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,新鎌ヶ谷,西白井,12.7,15.8,3.1,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,西白井,白井,15.8,17.8,2.0,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,白井,小室,17.8,19.8,2.0,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,小室,千葉ニュータウン中央,19.8,23.8,4.0,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,千葉ニュータウン中央,印西牧の原,23.8,28.5,4.7,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,印西牧の原,印旛日本医大,28.5,32.3,3.8,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,印旛日本医大,成田湯川,32.3,40.7,8.4,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,成田湯川,空港第2ビル,40.7,50.4,9.7,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km
+Narita Sky Access / Hokuso,空港第2ビル,成田空港,50.4,51.4,1.0,Keisei Group Guide 2026 p.53 (2025-04-01),official fare km

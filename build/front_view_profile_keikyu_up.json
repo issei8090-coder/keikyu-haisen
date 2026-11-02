@@ -1,0 +1,622 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "keikyu-kaitoku-frontview-up-2025-sample-20261026",
+  "title": "京急1500形快特 三崎口→泉岳寺 前面展望観測（大森海岸〜品川）",
+  "source": {
+    "type": "manual_video_observation",
+    "url": "https://www.youtube.com/watch?v=yLc_SmFqCIU",
+    "videoTitle": "【8K60p広角前面展望】京急線 快特（京急1500形）三崎口～泉岳寺 ＜速度計・マップ付・2025年版＞",
+    "direction": "up",
+    "service": "快特",
+    "rollingStock": "京急1500形（動画タイトル記載）",
+    "sampledAt": "2026-10-26",
+    "method": "画面上の速度計・駅間表示・通過字幕を目視で採取。速度は概数。",
+    "limitations": [
+      "単一列車・単一運転の観測で、線路の最高速度や速度制限値ではない",
+      "速度計は動画内表示を目視した概数。表示/キャプチャ時刻が不安定な点を含む",
+      "信号灯は複数線路のうち当該列車向けか確認できないものがある",
+      "速度変化の原因（信号、先行列車、進路、曲線、運転操作）は映像だけでは分離できない",
+      "終盤の品川停車時はプレイヤー時刻が更新されず、正確な停止時刻を採れない"
+    ]
+  },
+  "integrationPolicy": {
+    "role": "reference_profile_only",
+    "allowedUses": [
+      "信号マップ上に観測速度の参考線を表示する",
+      "同じ区間のシミュレーション走行との比較・診断に使う",
+      "追加観測が集まるまで、停車駅間の実走行速度の幅を把握する"
+    ],
+    "prohibitedUses": [
+      "VLINES / ttVLim の線路最高速度・速度制限値として採用する",
+      "この速度列だけで信号現示、速度標、信号位置、先行列車を確定する",
+      "単一走行の速度プロファイルを時刻表の定時運転曲線や車両性能値として扱う"
+    ],
+    "positionReference": "index.html内のKQ_KM相当。泉岳寺起点の営業キロ。駅通過点以外は停車駅間レンジで示し、駅間内の絶対位置は未確定。"
+  },
+  "stationKmFromSengakuji": {
+    "品川": 1.2,
+    "北品川": 1.9,
+    "新馬場": 2.6,
+    "青物横丁": 3.4,
+    "鮫洲": 3.9,
+    "立会川": 4.7,
+    "大森海岸": 6.0,
+    "平和島": 6.9,
+    "大森町": 7.7,
+    "梅屋敷": 8.4,
+    "京急蒲田": 9.2
+  },
+  "samples": [
+    {
+      "videoTimeSec": 3728,
+      "videoTime": "1:02:08",
+      "speedKmh": 90,
+      "stationInterval": [
+        "梅屋敷",
+        "大森町"
+      ],
+      "positionKmRange": [
+        7.7,
+        8.4
+      ],
+      "confidence": "medium",
+      "note": "駅間表示を読み取り。上り方向の距離レンジは降順。"
+    },
+    {
+      "videoTimeSec": 3729,
+      "videoTime": "1:02:09",
+      "speedKmh": 103,
+      "stationInterval": [
+        "梅屋敷",
+        "大森町"
+      ],
+      "positionKmRange": [
+        7.7,
+        8.4
+      ],
+      "confidence": "low",
+      "note": "直前サンプルから動画時刻が1秒しか進まず、時刻ラベルとキャプチャ間隔が不整合。差分計算に使わない。"
+    },
+    {
+      "videoTimeSec": 3752,
+      "videoTime": "1:02:32",
+      "speedKmh": 117,
+      "stationInterval": [
+        "大森町",
+        "平和島"
+      ],
+      "positionKmRange": [
+        6.9,
+        7.7
+      ],
+      "confidence": "low",
+      "note": "速度表示の左端が欠けており推定。"
+    },
+    {
+      "videoTimeSec": 3753,
+      "videoTime": "1:02:33",
+      "speedKmh": 113,
+      "stationInterval": [
+        "大森町",
+        "平和島"
+      ],
+      "positionKmRange": [
+        6.9,
+        7.7
+      ],
+      "confidence": "medium",
+      "note": "1秒差はキャプチャ時刻の不整合が疑われ、差分計算に使わない。"
+    },
+    {
+      "videoTimeSec": 3778,
+      "videoTime": "1:02:58",
+      "speedKmh": 116,
+      "stationInterval": [
+        "平和島",
+        "大森海岸"
+      ],
+      "positionKmRange": [
+        6.0,
+        6.9
+      ],
+      "confidence": "medium",
+      "note": "地図表示と速度計を目視。"
+    },
+    {
+      "videoTimeSec": 3788,
+      "videoTime": "1:03:08前後",
+      "speedKmh": 117,
+      "stationInterval": [
+        "平和島",
+        "大森海岸"
+      ],
+      "positionKmRange": [
+        6.0,
+        6.9
+      ],
+      "confidence": "low",
+      "note": "表示左端が欠けているため推定。"
+    },
+    {
+      "videoTimeSec": 3803,
+      "videoTime": "1:03:23",
+      "speedKmh": 115,
+      "station": "大森海岸",
+      "positionKm": 6.0,
+      "confidence": "high",
+      "note": "大森海岸通過中の表示。"
+    },
+    {
+      "videoTimeSec": 3821,
+      "videoTime": "1:03:41",
+      "speedKmh": 85,
+      "stationInterval": [
+        "立会川",
+        "大森海岸"
+      ],
+      "positionKmRange": [
+        4.7,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "駅間レンジのみ。"
+    },
+    {
+      "videoTimeSec": 3836,
+      "videoTime": "1:03:56",
+      "speedKmh": 69,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "大森海岸～青物横丁の間の概略範囲。中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3854,
+      "videoTime": "1:04:14",
+      "speedKmh": null,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "low",
+      "signalCandidate": {
+        "aspectColor": "green",
+        "trackAssignment": "unknown"
+      },
+      "note": "速度計は0のように見えるが桁欠けの可能性。0 km/hとして扱わない。緑灯候補は担当線未確認。 中間駅・正確な位置は未確認。 中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3870,
+      "videoTime": "1:04:30",
+      "speedKmh": 42,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "駅字幕は『通過中』。駅名の特定は保留。 中間駅・正確な位置は未確認。 中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3885,
+      "videoTime": "1:04:45",
+      "speedKmh": 45,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "大森海岸～青物横丁の間の概略範囲。中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3901,
+      "videoTime": "1:05:01",
+      "speedKmh": 31,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "右側に別列車が見えるが、速度低下の原因とは断定しない。 中間駅・正確な位置は未確認。 中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3916,
+      "videoTime": "1:05:16",
+      "speedKmh": 61,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "signalCandidate": {
+        "aspectColor": "red",
+        "trackAssignment": "unknown"
+      },
+      "note": "大森海岸～青物横丁の間の概略範囲。中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3931,
+      "videoTime": "1:05:31",
+      "speedKmh": 57,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "大森海岸～青物横丁の間の概略範囲。中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3944,
+      "videoTime": "1:05:44",
+      "speedKmh": 55,
+      "positionKmRange": [
+        3.4,
+        6.0
+      ],
+      "confidence": "medium",
+      "note": "大森海岸～青物横丁の間の概略範囲。中間駅・正確な位置は未確認。"
+    },
+    {
+      "videoTimeSec": 3959,
+      "videoTime": "1:05:59",
+      "speedKmh": 50,
+      "station": "青物横丁",
+      "positionKm": 3.4,
+      "confidence": "high",
+      "note": "青物横丁通過中の字幕。"
+    },
+    {
+      "videoTimeSec": 3972,
+      "videoTime": "1:06:12",
+      "speedKmh": 70,
+      "stationInterval": [
+        "新馬場",
+        "青物横丁"
+      ],
+      "positionKmRange": [
+        2.6,
+        3.4
+      ],
+      "confidence": "high",
+      "note": "駅間表示を読み取り。"
+    },
+    {
+      "videoTimeSec": 3984,
+      "videoTime": "1:06:24",
+      "speedKmh": 89,
+      "stationInterval": [
+        "新馬場",
+        "青物横丁"
+      ],
+      "positionKmRange": [
+        2.6,
+        3.4
+      ],
+      "confidence": "medium"
+    },
+    {
+      "videoTimeSec": 3997,
+      "videoTime": "1:06:37",
+      "speedKmh": 91,
+      "stationInterval": [
+        "北品川",
+        "新馬場"
+      ],
+      "positionKmRange": [
+        1.9,
+        2.6
+      ],
+      "confidence": "medium",
+      "note": "駅間表示は新馬場→北品川と読める。"
+    },
+    {
+      "videoTimeSec": 4009,
+      "videoTime": "1:06:49",
+      "speedKmh": 70,
+      "stationInterval": [
+        "北品川",
+        "新馬場"
+      ],
+      "positionKmRange": [
+        1.9,
+        2.6
+      ],
+      "confidence": "medium"
+    },
+    {
+      "videoTimeSec": 4024,
+      "videoTime": "1:07:04",
+      "speedKmh": 51,
+      "stationInterval": [
+        "品川",
+        "北品川"
+      ],
+      "positionKmRange": [
+        1.2,
+        1.9
+      ],
+      "confidence": "medium",
+      "note": "北品川通過中と見える。右側に別列車が見える。"
+    },
+    {
+      "videoTimeSec": 4040,
+      "videoTime": "1:07:20",
+      "speedKmh": 29,
+      "stationInterval": [
+        "品川",
+        "北品川"
+      ],
+      "positionKmRange": [
+        1.2,
+        1.9
+      ],
+      "confidence": "medium"
+    },
+    {
+      "videoTimeSec": 4054,
+      "videoTime": "1:07:34",
+      "speedKmh": 20,
+      "stationInterval": [
+        "品川",
+        "北品川"
+      ],
+      "positionKmRange": [
+        1.2,
+        1.9
+      ],
+      "confidence": "medium"
+    },
+    {
+      "videoTimeSec": 4057,
+      "videoTime": "1:07:37",
+      "speedKmh": 20,
+      "stationInterval": [
+        "品川",
+        "北品川"
+      ],
+      "positionKmRange": [
+        1.2,
+        1.9
+      ],
+      "confidence": "low",
+      "note": "プレイヤーの時間更新が止まり始めたため時刻の確度低下。"
+    },
+    {
+      "videoTimeSec": null,
+      "videoTime": null,
+      "speedKmh": 18,
+      "station": "品川",
+      "confidence": "low",
+      "note": "品川接近画面。時刻はプレイヤー表示停止後のため不明。"
+    },
+    {
+      "videoTimeSec": null,
+      "videoTime": null,
+      "speedKmh": 29,
+      "station": "品川",
+      "confidence": "low",
+      "note": "構内曲線上。時刻不明。"
+    },
+    {
+      "videoTimeSec": null,
+      "videoTime": null,
+      "speedKmh": 19,
+      "station": "品川",
+      "confidence": "low",
+      "note": "構内進入。時刻不明。"
+    },
+    {
+      "videoTimeSec": null,
+      "videoTime": null,
+      "speedKmh": 5,
+      "station": "品川",
+      "confidence": "medium",
+      "note": "停止直前。時刻不明。"
+    },
+    {
+      "videoTimeSec": null,
+      "videoTime": null,
+      "speedKmh": 0,
+      "station": "品川",
+      "confidence": "high",
+      "note": "『品川 停』表示および泉岳寺次駅表示と一致。停車確認。"
+    }
+  ],
+  "derivedIntervals": [
+    {
+      "fromVideoTime": "1:03:23",
+      "toVideoTime": "1:03:41",
+      "fromSpeedKmh": 115,
+      "toSpeedKmh": 85,
+      "deltaSpeedKmh": -30,
+      "durationSec": 18,
+      "meanAccelerationMps2": -0.463,
+      "estimatedDistanceM": 500,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:03:41",
+      "toVideoTime": "1:03:56",
+      "fromSpeedKmh": 85,
+      "toSpeedKmh": 69,
+      "deltaSpeedKmh": -16,
+      "durationSec": 15,
+      "meanAccelerationMps2": -0.296,
+      "estimatedDistanceM": 321,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:04:30",
+      "toVideoTime": "1:04:45",
+      "fromSpeedKmh": 42,
+      "toSpeedKmh": 45,
+      "deltaSpeedKmh": 3,
+      "durationSec": 15,
+      "meanAccelerationMps2": 0.056,
+      "estimatedDistanceM": 181,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:04:45",
+      "toVideoTime": "1:05:01",
+      "fromSpeedKmh": 45,
+      "toSpeedKmh": 31,
+      "deltaSpeedKmh": -14,
+      "durationSec": 16,
+      "meanAccelerationMps2": -0.243,
+      "estimatedDistanceM": 169,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:05:01",
+      "toVideoTime": "1:05:16",
+      "fromSpeedKmh": 31,
+      "toSpeedKmh": 61,
+      "deltaSpeedKmh": 30,
+      "durationSec": 15,
+      "meanAccelerationMps2": 0.556,
+      "estimatedDistanceM": 192,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:05:16",
+      "toVideoTime": "1:05:31",
+      "fromSpeedKmh": 61,
+      "toSpeedKmh": 57,
+      "deltaSpeedKmh": -4,
+      "durationSec": 15,
+      "meanAccelerationMps2": -0.074,
+      "estimatedDistanceM": 246,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:05:31",
+      "toVideoTime": "1:05:44",
+      "fromSpeedKmh": 57,
+      "toSpeedKmh": 55,
+      "deltaSpeedKmh": -2,
+      "durationSec": 13,
+      "meanAccelerationMps2": -0.043,
+      "estimatedDistanceM": 202,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:05:44",
+      "toVideoTime": "1:05:59",
+      "fromSpeedKmh": 55,
+      "toSpeedKmh": 50,
+      "deltaSpeedKmh": -5,
+      "durationSec": 15,
+      "meanAccelerationMps2": -0.093,
+      "estimatedDistanceM": 219,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:05:59",
+      "toVideoTime": "1:06:12",
+      "fromSpeedKmh": 50,
+      "toSpeedKmh": 70,
+      "deltaSpeedKmh": 20,
+      "durationSec": 13,
+      "meanAccelerationMps2": 0.427,
+      "estimatedDistanceM": 217,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:06:12",
+      "toVideoTime": "1:06:24",
+      "fromSpeedKmh": 70,
+      "toSpeedKmh": 89,
+      "deltaSpeedKmh": 19,
+      "durationSec": 12,
+      "meanAccelerationMps2": 0.44,
+      "estimatedDistanceM": 265,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:06:24",
+      "toVideoTime": "1:06:37",
+      "fromSpeedKmh": 89,
+      "toSpeedKmh": 91,
+      "deltaSpeedKmh": 2,
+      "durationSec": 13,
+      "meanAccelerationMps2": 0.043,
+      "estimatedDistanceM": 325,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:06:37",
+      "toVideoTime": "1:06:49",
+      "fromSpeedKmh": 91,
+      "toSpeedKmh": 70,
+      "deltaSpeedKmh": -21,
+      "durationSec": 12,
+      "meanAccelerationMps2": -0.486,
+      "estimatedDistanceM": 268,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:06:49",
+      "toVideoTime": "1:07:04",
+      "fromSpeedKmh": 70,
+      "toSpeedKmh": 51,
+      "deltaSpeedKmh": -19,
+      "durationSec": 15,
+      "meanAccelerationMps2": -0.352,
+      "estimatedDistanceM": 252,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:07:04",
+      "toVideoTime": "1:07:20",
+      "fromSpeedKmh": 51,
+      "toSpeedKmh": 29,
+      "deltaSpeedKmh": -22,
+      "durationSec": 16,
+      "meanAccelerationMps2": -0.382,
+      "estimatedDistanceM": 178,
+      "confidence": "medium"
+    },
+    {
+      "fromVideoTime": "1:07:20",
+      "toVideoTime": "1:07:34",
+      "fromSpeedKmh": 29,
+      "toSpeedKmh": 20,
+      "deltaSpeedKmh": -9,
+      "durationSec": 14,
+      "meanAccelerationMps2": -0.179,
+      "estimatedDistanceM": 95,
+      "confidence": "medium"
+    }
+  ],
+  "observedEvents": [
+    {
+      "videoTimeSec": 3854,
+      "type": "signal_candidate",
+      "aspectColor": "green",
+      "trackAssignment": "unknown",
+      "positionKmRange": [
+        3.9,
+        4.7
+      ]
+    },
+    {
+      "videoTimeSec": 3916,
+      "type": "signal_candidate",
+      "aspectColor": "red",
+      "trackAssignment": "unknown",
+      "positionKmRange": [
+        3.4,
+        3.9
+      ]
+    },
+    {
+      "videoTimeSec": null,
+      "type": "station_stop_confirmed",
+      "station": "品川",
+      "speedKmh": 0,
+      "videoTime": null
+    }
+  ]
+}

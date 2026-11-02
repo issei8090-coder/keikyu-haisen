@@ -1,0 +1,3 @@
+route,from_station,to_station,from_km,to_km,distance_km,distance_source,speed_limit_kmh,speed_source,confidence,notes
+Higashi-Narita,京成成田,東成田,0.0,7.1,7.1,Keisei Group Guide 2024 (mileage table; fare km),105,BosoView station-pair speed table (timetable No.22 era),historical candidate,Current official operating restriction not confirmed
+Shibayama,東成田,芝山千代田,0.0,2.2,2.2,Shibayama Railway company information,80,BosoView station-pair speed table (timetable No.22 era),historical candidate,35 km/h local curve exists but position not mapped; do not treat 80 as local curve clearance

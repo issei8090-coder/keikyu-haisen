@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="ja" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>京急線 配線図シミュレーター</title>
+<script>try { const t = localStorage.getItem('kq-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+<style>
+  /* ===== デザイントークン(ダーク=既定) ===== */
+  :root {
+    --font: "BIZ UDPGothic","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+    --font-num: "BIZ UDGothic","Consolas","Yu Gothic UI",monospace;
+    --bg:#0b1018; --surface:#111925; --surface-2:#172131; --surface-3:#1e2a3d; --elev:#1a2433;
+    --line:#243044; --line-2:#33425b;
+    --ink:#e6ebf2; --ink-2:#c3ccd8; --sub:#8b97a8; --faint:#7d899b;
+    --accent:#2563eb; --accent-ink:#fff; --accent-soft:rgba(59,130,246,.18);
+    --brand:#e60012;
+    --ok:#22c55e; --warn:#f59e0b; --bad:#f05252; --bad-soft:rgba(240,82,82,.14); --note:#e0a33a;
+    --map-bg:#0d141f; --track:#86a8ff; --plat:#2f4fb8; --stname:#c9d7ff; --pink:#ff5aac;
+    --halo:#0d141f;
+    --board-bg:#0a0e14; --board-line:#232c3a;
+    --shadow:0 10px 30px rgba(0,0,0,.45);
+    --r:10px; --r-s:7px;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg:#eef1f6; --surface:#fff; --surface-2:#f5f7fa; --surface-3:#e9edf3; --elev:#fff;
+    --line:#dde2ea; --line-2:#c9d1dd;
+    --ink:#1a2230; --ink-2:#344054; --sub:#5f6b7d; --faint:#6b7585;
+    --accent:#1d4ed8; --accent-soft:rgba(29,78,216,.10);
+    --ok:#12864a; --warn:#b45309; --bad:#c81e1e; --bad-soft:rgba(200,30,30,.08); --note:#8a5a00;
+    --map-bg:#fff; --track:#1b2fd0; --plat:#1b2fd0; --stname:#1b2fd0; --pink:#f0148c;
+    --halo:#fff;
+    --shadow:0 8px 24px rgba(20,30,60,.16);
+    color-scheme: light;
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html, body { height:100%; }
+  body { margin:0; font:14px/1.5 var(--font); color:var(--ink); background:var(--bg); display:flex; flex-direction:column; overflow:hidden; }
+  button, select, input { font:inherit; color:inherit; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .ico { width:16px; height:16px; flex:none; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+  .ico.fill, .ico .fill { fill:currentColor; stroke:none; }
+
+  button { display:inline-flex; align-items:center; justify-content:center; gap:6px; border:1px solid var(--line-2); background:var(--surface-2); color:var(--ink-2); border-radius:var(--r-s); padding:5px 12px; min-height:32px; cursor:pointer; transition:background .15s, border-color .15s, color .15s; }
+  button:hover { background:var(--surface-3); color:var(--ink); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:700; width:100%; min-height:38px; }
+  button.primary:hover { filter:brightness(1.1); background:var(--accent); }
+  button.ghost { background:transparent; border-color:transparent; }
+  button.ghost:hover { background:var(--surface-3); }
+  button.icon { width:34px; padding:0; }
+  select { border:1px solid var(--line-2); border-radius:var(--r-s); padding:5px 8px; min-height:32px; background:var(--surface-2); width:100%; cursor:pointer; }
+  input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; margin:0; cursor:pointer; }
+  input[type=range] { -webkit-appearance:none; appearance:none; height:22px; background:transparent; cursor:pointer; margin:0; }
+  input[type=range]::-webkit-slider-runnable-track { height:4px; border-radius:2px; background:var(--line-2); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:var(--accent); border:2px solid var(--surface); margin-top:-6px; box-shadow:0 0 0 1px var(--accent); }
+  input[type=range]::-moz-range-track { height:4px; border-radius:2px; background:var(--line-2); }
+  input[type=range]::-moz-range-thumb { width:13px; height:13px; border-radius:50%; background:var(--accent); border:2px solid var(--surface); }
+
+  /* ===== 上部バー ===== */
+  .top { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; padding:8px 16px; background:var(--surface); border-bottom:1px solid var(--line); position:relative; z-index:20; }
+  .top::before { content:""; position:absolute; left:0; right:0; top:0; height:3px; background:var(--brand); }
+  .brand { display:flex; align-items:center; gap:10px; margin-right:4px; }
+  .brand .mk { width:28px; height:28px; border-radius:7px; background:var(--brand); display:grid; place-items:center; color:#fff; }
+  h1 { font-size:15px; margin:0; letter-spacing:.04em; font-weight:700; white-space:nowrap; }
+  h1 small { display:block; font-size:10.5px; color:var(--sub); font-weight:400; letter-spacing:.08em; }
+  .seg { display:inline-flex; background:var(--surface-2); border:1px solid var(--line-2); border-radius:9px; padding:2px; }
+  .seg button { border:none; background:transparent; border-radius:7px; min-height:28px; padding:3px 14px; color:var(--sub); font-weight:600; }
+  .seg button:hover { color:var(--ink); background:transparent; }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .transport { display:flex; align-items:center; gap:10px; flex:1; min-width:420px; padding:3px 10px 3px 4px; background:var(--surface-2); border:1px solid var(--line); border-radius:12px; }
+  .transport #play { width:36px; min-height:36px; padding:0; border-radius:9px; background:var(--accent); border-color:var(--accent); color:#fff; }
+  .transport #play:hover { filter:brightness(1.1); }
+  .transport select { width:auto; min-height:30px; background:var(--surface); }
+  #clock { font:700 22px/1 var(--font-num); letter-spacing:.02em; font-variant-numeric:tabular-nums; min-width:5.4em; color:var(--ink); }
+  .tl { flex:1; min-width:140px; display:flex; flex-direction:column; gap:0; }
+  #ttime { width:100%; }
+  .tl-scale { position:relative; height:11px; margin:0 8px; font:10px/1 var(--font-num); color:var(--faint); user-select:none; }
+  .tl-scale span { position:absolute; transform:translateX(-50%); }
+  .tools { display:flex; align-items:center; gap:4px; margin-left:auto; }
+  .tgl { display:inline-flex; align-items:center; gap:6px; color:var(--ink-2); font-size:13px; padding:4px 8px; border-radius:var(--r-s); cursor:pointer; white-space:nowrap; }
+  .tgl:hover { background:var(--surface-3); }
+  /* 設定メニュー */
+  .menu { position:relative; }
+  .menu > summary { list-style:none; display:inline-flex; align-items:center; gap:6px; min-height:32px; padding:4px 10px; border:1px solid var(--line-2); border-radius:var(--r-s); background:var(--surface-2); color:var(--ink-2); cursor:pointer; font-size:13px; user-select:none; }
+  .menu > summary::-webkit-details-marker { display:none; }
+  .menu > summary:hover, .menu[open] > summary { background:var(--surface-3); color:var(--ink); }
+  .menu .pop { position:absolute; right:0; top:calc(100% + 6px); width:330px; background:var(--elev); border:1px solid var(--line-2); border-radius:var(--r); box-shadow:var(--shadow); padding:10px; display:flex; flex-direction:column; gap:2px; }
+  .pop h3 { margin:6px 6px 4px; font-size:11px; color:var(--sub); font-weight:600; letter-spacing:.08em; }
+  .pop h3:first-child { margin-top:0; }
+  .pop label { display:flex; align-items:flex-start; gap:9px; padding:6px; border-radius:6px; cursor:pointer; font-size:13px; color:var(--ink-2); }
+  .pop label:hover { background:var(--surface-3); color:var(--ink); }
+  .pop label input { margin-top:2px; }
+  .pop label small { display:block; color:var(--sub); font-size:11px; }
+  /* 状態バー */
+  .status { flex:none; display:flex; align-items:center; gap:14px; padding:4px 18px; font-size:12px; color:var(--sub); background:var(--bg); border-bottom:1px solid var(--line); min-height:26px; overflow:hidden; white-space:nowrap; }
+  .status .live { display:inline-flex; align-items:center; gap:6px; color:var(--ink-2); font-weight:600; }
+  .status .live::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--faint); }
+  body.running .status .live::before { background:var(--ok); box-shadow:0 0 0 3px rgba(34,197,94,.18); }
+  #ttcount { color:var(--ink-2); font-variant-numeric:tabular-nums; }
+  #ttinfo { overflow:hidden; text-overflow:ellipsis; }
+  .status kbd { font:11px var(--font-num); border:1px solid var(--line-2); border-bottom-width:2px; border-radius:4px; padding:0 4px; color:var(--sub); margin-left:auto; }
+
+  /* ===== 本体 ===== */
+  main { flex:1; min-height:0; display:flex; gap:12px; padding:12px; }
+  .mapwrap { flex:1; min-width:0; overflow:auto; background:var(--map-bg); border:1px solid var(--line); border-radius:var(--r); padding:10px; }
+  svg#map { display:block; width:100%; min-width:900px; height:auto; cursor:crosshair; user-select:none; }
+  .zoom { position:sticky; top:0; left:0; height:0; z-index:3; }
+  .zoom > div { position:absolute; right:0; top:0; display:flex; align-items:center; gap:2px; padding:3px; background:var(--elev); border:1px solid var(--line-2); border-radius:9px; box-shadow:var(--shadow); }
+  .zoom button { min-height:28px; width:30px; padding:0; border:none; background:transparent; }
+  .zoom button:hover { background:var(--surface-3); }
+  .zoom #zv { width:auto; min-width:46px; padding:0 6px; font:12px var(--font-num); color:var(--ink-2); }
+  aside { width:320px; flex:none; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding-right:2px; scrollbar-width:thin; scrollbar-color:var(--line-2) transparent; }
+  section, .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:12px 14px; }
+  h2 { display:flex; align-items:center; gap:6px; font-size:11.5px; margin:0 0 8px; color:var(--sub); font-weight:700; letter-spacing:.08em; }
+  h2 .n { margin-left:auto; color:var(--ink); font:700 13px var(--font-num); letter-spacing:0; }
+  details.card > summary { list-style:none; cursor:pointer; display:flex; align-items:center; gap:6px; font-size:11.5px; color:var(--sub); font-weight:700; letter-spacing:.08em; user-select:none; }
+  details.card > summary::-webkit-details-marker { display:none; }
+  details.card > summary::after { content:""; margin-left:auto; width:7px; height:7px; border-right:2px solid var(--sub); border-bottom:2px solid var(--sub); transform:rotate(45deg); transition:transform .15s; }
+  details.card[open] > summary::after { transform:rotate(-135deg); }
+  details.card[open] > summary { margin-bottom:10px; }
+  .row { display:block; margin-bottom:10px; }
+  .row > span { display:block; font-size:11.5px; color:var(--sub); margin-bottom:4px; }
+  #types { display:flex; flex-wrap:wrap; gap:5px; }
+  .chip { min-height:28px; padding:2px 10px; border-radius:999px; border-color:var(--c); color:var(--c); background:transparent; font-weight:700; font-size:12.5px; }
+  .chip:hover { background:var(--surface-3); }
+  .chip.on { background:color-mix(in srgb, var(--c) 72%, #000); border-color:color-mix(in srgb, var(--c) 72%, #000); color:#fff; }
+  #msg { min-height:1.5em; margin:8px 0 0; font-size:12.5px; color:var(--sub); }
+  #msg.bad, #selmsg { color:var(--bad); }
+  .subrow { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--sub); margin-top:10px; padding-top:10px; border-top:1px solid var(--line); }
+  .subrow input[type=range] { flex:1; }
+  #speedv { width:3.4em; color:var(--ink); font:12px var(--font-num); }
+  .btns { display:flex; gap:6px; margin-top:8px; }
+  .btns button { flex:1; }
+  .btns button.danger, button.danger { color:var(--bad); }
+  .inline { display:flex; gap:6px; }
+  .inline button { flex:none; }
+
+  /* 列車の詳細 */
+  #ttbox, #selbox { border-left:3px solid var(--accent); }
+  #seltitle, #tttitle { font-weight:700; font-size:16px; line-height:1.35; }
+  #ttno { color:var(--sub); font:12px var(--font-num); margin:2px 0 8px; }
+  #ttlate { display:inline-block; font-size:12px; color:var(--ok); background:rgba(34,197,94,.12); border-radius:6px; padding:2px 8px; margin:0 0 6px; }
+  #ttlate:empty { display:none; }
+  #ttlate.late { color:var(--bad); background:var(--bad-soft); }
+  #ttlinkinfo { font-size:12px; margin:0 0 6px; color:var(--note); }
+  #ttlinkinfo:empty { display:none; }
+  #ttstops { list-style:none; margin:0; padding:0 0 0 2px; max-height:280px; overflow:auto; font-size:12.5px; border-top:1px solid var(--line); padding-top:6px; }
+  #ttstops li { display:flex; gap:10px; padding:2px 0 2px 14px; position:relative; }
+  #ttstops li::before { content:""; position:absolute; left:3px; top:0; bottom:0; width:2px; background:var(--line-2); }
+  #ttstops li::after { content:""; position:absolute; left:0; top:50%; width:8px; height:8px; margin-top:-4px; border-radius:50%; background:var(--surface); border:2px solid var(--line-2); }
+  #ttstops li.w { color:var(--note); }
+  #ttstops span { color:var(--sub); font:12px var(--font-num); min-width:7.5em; text-align:right; }
+  #selstate { color:var(--sub); font-size:12.5px; }
+  #selstops { font-size:12px; color:var(--sub); margin:6px 0 10px; max-height:5.6em; overflow:auto; }
+
+  /* 在線列車一覧 */
+  ul#list, ul#ttlist { list-style:none; margin:0; padding:0; }
+  ul#ttlist { max-height:460px; overflow-y:auto; margin:0 -6px; scrollbar-width:thin; scrollbar-color:var(--line-2) transparent; }
+  #list li, #ttlist li { display:flex; align-items:center; gap:7px; padding:4px 6px; border-radius:6px; cursor:pointer; font-size:12.5px; min-height:28px; }
+  #list li:hover, #ttlist li:hover { background:var(--surface-3); }
+  #list li.sel, #ttlist li.sel { background:var(--accent-soft); box-shadow:inset 2px 0 0 var(--accent); }
+  #list small { color:var(--sub); margin-left:auto; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:9.5em; }
+  #list button { border:none; background:none; min-height:24px; padding:0 4px; color:var(--sub); font-size:15px; }
+  #list button:hover { color:var(--bad); }
+  .dot, #ttlist .dot { width:9px; height:9px; border-radius:50%; flex:none; box-shadow:0 0 0 1.5px var(--surface), 0 0 0 2.5px rgba(255,255,255,.18); }
+  :root[data-theme="light"] .dot { box-shadow:none; }
+  #ttlist b { white-space:nowrap; color:var(--ink); }
+  #ttlist .rn { color:var(--sub); font:11px var(--font-num); white-space:nowrap; }
+  #ttlist small { color:var(--sub); margin-left:auto; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11.5em; text-align:right; }
+  .opsl { list-style:none; margin:8px 0; padding:0; max-height:300px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-s); }
+  .opsl li { display:flex; flex-wrap:wrap; align-items:center; gap:2px 6px; padding:4px 6px; font-size:12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .opsl li:hover { background:var(--surface-2); }
+  .opsl li.on { background:var(--accent-soft); outline:1px solid var(--accent); }
+  .opsl .om { font-family:var(--font-num); color:var(--ink-2); }
+  .opsl .ok { font-weight:700; padding:0 4px; border-radius:4px; }
+  .opsl li.oa .ok { color:var(--bad); background:var(--bad-soft); }
+  .opsl li.od .ok { color:var(--ok); background:var(--accent-soft); }
+  .opsl .on2 { font-family:var(--font-num); font-weight:700; min-width:58px; }
+  .opsl .ow { order:5; flex-basis:100%; color:var(--sub); padding-left:44px; font-size:11.5px; }
+  .opsl .ob { margin-left:auto; display:flex; gap:4px; }
+  .opsl .ob button, .opse button, .opssel button { padding:2px 7px; min-height:24px; font-size:11.5px; }
+  .opsh { font-size:12px; color:var(--sub); margin:12px 0 6px; }
+  .opsform { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .opsform label { display:flex; flex-direction:column; gap:2px; font-size:11.5px; color:var(--sub); min-width:0; }
+  .opsform select { min-height:30px; }
+  .opsform input { width:100%; box-sizing:border-box; min-width:0; border:1px solid var(--line-2); border-radius:var(--r-s); padding:5px 8px; min-height:30px; background:var(--surface-2); color:var(--ink); font:inherit; font-size:12.5px; }
+  #cloudkey { flex:1; min-width:0; border:1px solid var(--line-2); border-radius:var(--r-s); padding:5px 8px; min-height:32px; background:var(--surface-2); color:var(--ink); font:inherit; }
+  .opse { list-style:none; margin:0; padding:0; }
+  .opse li { display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; border-bottom:1px solid var(--line); }
+  .opse li span { flex:1; }
+  .opswarn { color:var(--warn); font-size:12px; margin:4px 0; }
+  .opssel { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 6px; }
+  #empty, .hint { color:var(--sub); font-size:12.5px; margin:0; line-height:1.7; }
+
+  /* 運用のツールチップ */
+  #ttops { position:fixed; z-index:50; background:var(--elev); color:var(--ink); border:1px solid var(--line-2); border-radius:var(--r); box-shadow:var(--shadow); padding:10px 12px; font-size:12px; max-width:380px; pointer-events:none; max-height:calc(100vh - 12px); overflow:hidden; }
+  #ttops h3 { margin:0 0 6px; font-size:12.5px; }
+  #ttops ol { list-style:none; margin:0; padding:0; }
+  #ttops li { display:flex; gap:6px; padding:1px 3px; white-space:nowrap; }
+  #ttops.wide { max-width:760px; }
+  #ttops.wide ol { column-count:2; column-gap:16px; }
+  #ttops.wide li { break-inside:avoid; }
+  #ttops li.gap { color:var(--sub); font-size:11px; padding-left:8px; }
+  #ttops li.gap.cut { color:var(--note); border-top:1px dashed var(--line-2); margin-top:2px; padding-top:2px; }
+  #ttops li.cur { font-weight:700; background:var(--accent-soft); border-radius:4px; }
+  #ttops li span.tm { color:var(--sub); font-family:var(--font-num); }
+  #ttops p { margin:6px 0 0; color:var(--sub); font-size:11px; }
+
+  /* ===== 配線図 ===== */
+  .track { fill:none; stroke:var(--track); stroke-width:1.15; stroke-linecap:round; stroke-linejoin:round; }
+  .track.over { stroke-dasharray:3 2; }
+  .plat { fill:var(--plat); }
+  .hatch { fill:url(#hatch); stroke:var(--track); stroke-width:.9; }
+  .hatchline { stroke:var(--track); stroke-width:1.1; }
+  .stname { font-size:9.5px; fill:var(--stname); text-anchor:middle; pointer-events:none; }
+  .mark { font-size:9px; fill:var(--track); text-anchor:middle; pointer-events:none; }
+  .pink { font-size:9.5px; fill:var(--pink); pointer-events:none; }
+  .note { font-size:9px; fill:var(--sub); pointer-events:none; }
+  .cursor { fill:none; stroke:#ff8a1f; stroke-width:1.2; pointer-events:none; }
+  .origin { fill:rgba(255,138,31,.18); stroke:#ff8a1f; stroke-width:1.2; pointer-events:none; }
+  .origindot { fill:#ff8a1f; pointer-events:none; }
+  .routehl { fill:none; stroke:#ffb300; stroke-width:4.5; stroke-opacity:.45; stroke-linecap:round; stroke-linejoin:round; pointer-events:none; }
+  .train { cursor:pointer; }
+  .train .casing { fill:none; stroke:var(--halo); stroke-width:6.4; stroke-linecap:round; stroke-linejoin:round; }
+  .train .body { fill:none; stroke-width:4.4; stroke-linecap:round; stroke-linejoin:round; }
+  .train.sel .casing { stroke:#ffb300; }
+  .tlabel { font-size:6.6px; font-weight:700; text-anchor:middle; paint-order:stroke; stroke:var(--halo); stroke-width:2.2; stroke-linejoin:round; pointer-events:none; }
+  .nolabel .tlabel { display:none; }
+  /* ダークでは暗い種別色を明るく読み替える(普通・スカイライナー・ウィング・ライナー) */
+  :root:not([data-theme="light"]) .train .body[stroke="#3b3f46"] { stroke:#c4cad3; }
+  :root:not([data-theme="light"]) .tlabel[fill="#3b3f46"] { fill:#c4cad3; }
+  :root:not([data-theme="light"]) .train .body[stroke="#1b3fa8"] { stroke:#6f8dff; }
+  :root:not([data-theme="light"]) .tlabel[fill="#1b3fa8"] { fill:#6f8dff; }
+  :root:not([data-theme="light"]) .tlabel[fill="#7b3fb5"], :root:not([data-theme="light"]) .tlabel[fill="#7a4fb5"] { fill:#b590ff; }
+  :root:not([data-theme="light"]) .train .body[stroke="#7b3fb5"], :root:not([data-theme="light"]) .train .body[stroke="#7a4fb5"] { stroke:#a07bf0; }
+  :root:not([data-theme="light"]) .tlabel[fill="#e0261c"] { fill:#ff5a4f; }
+  :root:not([data-theme="light"]) .tlabel[fill="#d6408f"] { fill:#ee62ab; }
+  :root:not([data-theme="light"]) .tlabel[fill="#12964a"] { fill:#2fbf68; }
+  :root:not([data-theme="light"]) #tttitle[style*="59, 63, 70"], :root:not([data-theme="light"]) #seltitle[style*="59, 63, 70"] { color:var(--ink) !important; }
+  :root:not([data-theme="light"]) #tttitle[style*="27, 63, 168"], :root:not([data-theme="light"]) #seltitle[style*="27, 63, 168"] { color:#6f8dff !important; }
+  :root:not([data-theme="light"]) .chip[style*="#3b3f46"] { --c:#c4cad3 !important; }
+  :root:not([data-theme="light"]) .chip[style*="#3b3f46"].on { color:#0b1018; }
+  :root:not([data-theme="light"]) .chip[style*="#1b3fa8"] { --c:#6f8dff !important; }
+
+  /* ===== 運転指令(盤はどちらのテーマでも暗い) ===== */
+  .boardwrap { flex:1; min-width:0; overflow:auto; background:var(--board-bg); border:1px solid var(--board-line); border-radius:var(--r); padding:10px; color:#c9d1dc; }
+  #btabs { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:8px; }
+  #btabs button { background:#151c27; border-color:#2a3546; color:#aeb8c6; font-size:13px; }
+  #btabs button:hover { background:#1d2735; color:#e3e8ef; }
+  #btabs button.on { background:#2f6fde; border-color:#2f6fde; color:#fff; font-weight:700; }
+  .bscroll { overflow-x:auto; scrollbar-color:#33425b transparent; }
+  svg#board { display:block; user-select:none; }
+  .bnote { font-size:11.5px; color:#7d8898; margin:8px 2px 0; line-height:1.7; }
+  .bk-track { fill:none; stroke:#6b7686; stroke-width:2.2; stroke-linecap:round; }
+  .bk-plat { fill:#232d3f; stroke:#3a4760; stroke-width:.6; }
+  .bk-st { font-size:14px; fill:#e3e8ef; text-anchor:middle; font-weight:700; }
+  .bk-stkm { font-size:10px; fill:#7d8898; text-anchor:middle; }
+  .bk-tick { stroke:#3a4556; stroke-width:.8; }
+  .bk-km { font-size:10.5px; fill:#7d8898; text-anchor:middle; }
+  .bk-bnd { fill:none; stroke:#8792a2; stroke-width:.8; stroke-dasharray:1.5 1; }
+  .bk-lock { fill:none; stroke:#29c45a; stroke-width:4; stroke-opacity:.55; stroke-linecap:butt; pointer-events:none; }
+  .bk-train { cursor:pointer; }
+  .bk-occ { fill:none; stroke:#ff4d3d; stroke-width:8; stroke-linecap:butt; }
+  .bk-body { fill:none; stroke-width:4.4; stroke-linecap:butt; }
+  .bk-train.sel .bk-occ { stroke:#ffd23d; }
+  .bk-car { fill:none; stroke-width:6; stroke-linecap:butt; }
+  .bk-car[stroke="#3b3f46"] { stroke:#aab3bf; }
+  .bk-selc { fill:none; stroke:#ffd23d; stroke-width:9.5; stroke-linecap:butt; }
+  .bk-occb { fill:none; stroke:#ff4d3d; stroke-width:2.6; stroke-linecap:butt; pointer-events:none; }
+  .bk-sig .bk-lit { pointer-events:none; }
+  .bk-sig { cursor:pointer; }
+  .bk-sig .bk-head { fill:#05070a; stroke:#6b7686; stroke-width:.5; }
+  .bk-sig .bk-post { stroke:#6b7686; stroke-width:.7; }
+  .bk-sig.blk .bk-head { stroke:#4c5666; }
+  .bk-sig.man .bk-head { stroke:#ff4d3d; stroke-width:1.2; }
+  .bk-sig.sel .bk-head { stroke:#ffd23d; stroke-width:1.2; }
+  .bk-sig.est .bk-head { stroke-dasharray:2 1.4; }
+  .bk-sig.usr .bk-head { stroke:#9fb3cc; }
+  .bk-sig.warn .bk-head { stroke:#ff5a4d; stroke-width:1.1; }
+  .bk-warn { font-size:11px; font-weight:800; fill:#ff5a4d; text-anchor:middle; pointer-events:none; }
+  .bk-locw circle { fill:#3a0d0d; stroke:#ff5a4d; stroke-width:1; } .bk-locw text { font-size:9px; font-weight:800; fill:#ff8a7a; text-anchor:middle; }
+  .se-warn { margin:6px 0; padding-left:16px; font-size:12px; color:var(--bad); } .se-warn li { margin:3px 0; } .se-warn li b { color:var(--ink); font-weight:700; }
+  .bk-sigk { font-size:8px; fill:#ffd23d; text-anchor:middle; font-weight:700; pointer-events:none; }
+  svg#board.editing { cursor:crosshair; }
+  svg#board.editing .bk-train, svg#board.editing .bk-lab { pointer-events:none; opacity:.55; }
+  svg#board.editing .bk-sig { cursor:grab; }
+  #sigbar { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin-bottom:8px; font-size:12px; }
+  #sigbar button { background:#151c27; border-color:#2a3546; color:#c9d1dc; font-size:12px; padding:3px 8px; min-height:28px; }
+  #sigbar button:hover { background:#1d2735; }
+  #sigbar button.on { background:#2f6fde; border-color:#2f6fde; color:#fff; font-weight:700; }
+  #sigbar button.danger { color:#ff8a80; }
+  .sg-grp { display:inline-flex; align-items:center; gap:3px; } .sg-grp > span { color:#8792a2; margin-right:2px; }
+  .sg-grp select { background:#151c27; color:#dfe6ef; border:1px solid #2a3546; border-radius:5px; padding:2px 4px; min-height:28px; font-size:12px; width:auto; }
+  .sg-st { color:#8792a2; } #sigmsg { color:#ffab40; }
+  .se-row { display:flex; flex-wrap:wrap; align-items:center; gap:3px; margin:4px 0; } .se-row > span { color:var(--sub); font-size:12px; } .se-row > span:first-child { width:40px; flex:none; }
+  .se-row button { background:var(--surface-2); border-color:var(--line-2); color:var(--ink-2); font-size:12px; padding:3px 8px; min-height:28px; }
+  .se-row button.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:700; }
+  .se-row input { width:110px; background:var(--surface-2); border:1px solid var(--line-2); border-radius:5px; padding:3px 6px; }
+  .bk-lab { cursor:pointer; }
+  .bk-labline { stroke:#6b7686; stroke-width:.5; }
+  .bk-labbox { fill:#0b0f15; stroke-width:.8; }
+  .bk-lab.sel .bk-labbox { fill:#3a3210; }
+  .bk-labt { font-size:10.5px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .bk-late { font-size:10.5px; font-weight:700; fill:#ffab40; }
+  #dispsec { border-left:3px solid #2f6fde; }
+  #dispbox { font-size:12.5px; }
+  .dp-title { font-weight:700; font-size:14px; }
+  .dp-sub { color:var(--sub); font-size:12px; margin:2px 0 6px; }
+  .dp-tab { border-collapse:collapse; width:100%; margin:4px 0; }
+  .dp-tab th { text-align:left; color:var(--sub); font-weight:500; padding:2px 8px 2px 0; white-space:nowrap; vertical-align:top; }
+  .dp-tab td { padding:2px 0; font-variant-numeric:tabular-nums; }
+  .dp-tab td.late { color:var(--bad); font-weight:700; }
+  .dp-asp { display:inline-block; padding:0 6px; border-radius:4px; color:#fff; font-weight:700; font-size:11.5px; }
+  .a-R { background:#d92b20; } .a-KD { background:#777; } .a-YY, .a-Y { background:#d9a300; } .a-YG, .a-YGF { background:linear-gradient(90deg,#d9a300 50%,#1f9d4a 50%); } .a-G { background:#1f9d4a; } .a-SH { background:#666; }
+  .dp-ev { list-style:none; margin:0; padding:0; max-height:220px; overflow:auto; font-size:12px; }
+  .dp-ev li { padding:1px 0; }
+  .dp-ev li span { color:var(--sub); margin-right:6px; font-family:var(--font-num); }
+  .dp-ev li.k-emer, .dp-ev li.k-spad { color:var(--bad); }
+  .dp-ev li.k-wait { color:var(--note); }
+
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+  @media (max-width: 1180px) { .transport { order:5; flex-basis:100%; min-width:0; } }
+  @media (max-width: 900px) {
+    body { overflow:auto; height:auto; display:block; }
+    main { flex-direction:column; }
+    aside { width:100%; overflow:visible; }
+    .mapwrap, .boardwrap { width:100%; }
+    .status kbd { display:none; }
+    h1 small { display:none; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mk" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14M9 21l-2-4M15 21l2-4"/><circle cx="9" cy="14" r=".6" class="fill"/><circle cx="15" cy="14" r=".6" class="fill"/></svg></span>
+    <h1>京急線 配線図シミュレーター<small>KEIKYU TRACK DIAGRAM SIMULATOR</small></h1>
+  </div>
+  <div class="seg views" role="tablist" aria-label="表示"><button id="vmap" class="on">配線図</button><button id="vdisp">運転指令</button></div>
+  <div class="transport">
+    <button id="play" aria-label="一時停止" title="一時停止 / 再開(Space)"></button>
+    <select id="ttday" aria-label="時刻表" title="時刻表"><option value="">時刻表 OFF</option><option value="wd">平日</option><option value="hd">土休日</option></select>
+    <span id="clock">07:00:00</span>
+    <div class="tl">
+      <input id="ttime" type="range" min="270" max="1530" step="1" value="420" aria-label="時刻">
+      <div class="tl-scale" aria-hidden="true"><span style="left:7.14%">6</span><span style="left:21.43%">9</span><span style="left:35.71%">12</span><span style="left:50.00%">15</span><span style="left:64.29%">18</span><span style="left:78.57%">21</span><span style="left:92.86%">24</span></div>
+    </div>
+    <select id="ttrate" aria-label="進み方" title="時刻表の進み方"><option value="1">×1 実時間</option><option value="10">×10</option><option value="30" selected>×30</option><option value="60">×60</option><option value="120">×120</option><option value="300">×300</option></select>
+  </div>
+  <div class="tools">
+    <label class="tgl" title="列車ラベルの表示"><input id="labels" type="checkbox" checked> ラベル</label>
+    <button id="theme" class="ghost icon" aria-label="ライト/ダークの切り替え" title="ライト/ダークの切り替え"></button>
+    <details class="menu" id="setmenu">
+      <summary title="運行の設定"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>運行の設定</summary>
+      <div class="pop">
+        <h3>時刻表の運行</h3>
+        <label><input id="ttlink" type="checkbox" checked><span>折り返しを自動判定<small>運用表・運行番号から折り返し相手を決める</small></span></label>
+        <label><input id="ttsiding" type="checkbox" checked><span>引上線を使う</span></label>
+        <label><input id="ttwait" type="checkbox" checked><span>追い抜きから待避を推定</span></label>
+        <label><input id="ttfollow" type="checkbox" checked><span>同じ線では追い越さない</span></label>
+        <label><input id="ttcouple" type="checkbox" checked><span>金沢文庫の増結<small>平日朝の上り特急・快特に4両を増結</small></span></label>
+        <h3>表示</h3>
+        <label><input id="ttrunno" type="checkbox" checked><span>運行番号・所属と交互に表示</span></label>
+        <h3>運転指令</h3>
+        <label title="泉岳寺〜京急川崎は、実際の距離・加減速・速度制限・信号の現示に従って走らせる"><input id="dispon" type="checkbox" checked><span>実距離・信号で運転<small>泉岳寺〜京急川崎</small></span></label>
+      </div>
+    </details>
+  </div>
+</header>
+<div class="status">
+  <span class="live" id="livestate">停止中</span>
+  <span id="ttcount"></span><span id="ttinfo"></span>
+  <kbd title="Space で一時停止 / 再開">Space</kbd>
+</div>
+<main>
+  <div class="mapwrap"><div class="zoom"><div><button id="zout" aria-label="縮小" title="縮小(Ctrl+ホイール)"><svg class="ico" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button><button id="zv" title="全体を表示">100%</button><button id="zin" aria-label="拡大" title="拡大(Ctrl+ホイール)"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button></div></div><svg id="map" xmlns="http://www.w3.org/2000/svg"></svg></div>
+  <div class="boardwrap" id="boardwrap" hidden>
+    <div id="btabs"></div>
+    <div id="sigbar"></div>
+    <div class="bscroll"><svg id="board" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <p class="bnote">横方向は実際のキロ程(駅の営業キロを目印に比例配分)。ホームの長さは止まる列車の最大両数×18m。信号機は「信号機を編集」で種類(場内・出発・閉塞・入換・中継)・向き・位置を指定できます(指定していない区間は推定の位置)。速度制限は推定で build/disp_cfg.json で直せます。緑の線=確保された進路、列車は実際の長さ、ラベルは列車番号・速度(km/h)・遅れ。信号機をクリックすると停止を指示できます。</p>
+  </div>
+  <aside>
+    <section id="dispsec" hidden>
+      <h2>運転指令 · 泉岳寺〜京急川崎</h2>
+      <div id="dispbox"></div>
+    </section>
+    <section id="ttbox" hidden>
+      <h2>時刻表の列車</h2>
+      <div id="tttitle"></div>
+      <div id="ttno"></div>
+      <div id="ttlate"></div>
+      <div id="ttlinkinfo"></div>
+      <ol id="ttstops"></ol>
+    </section>
+    <section id="selbox" hidden>
+      <h2>選択中の列車</h2>
+      <div id="seltitle"></div>
+      <div id="selstate"></div>
+      <div id="selstops"></div>
+      <div class="inline"><select id="redst"></select><button id="rego">行先変更</button></div>
+      <div id="selmsg"></div>
+      <div class="btns"><button id="hold">抑止する</button><button id="del" class="danger">削除</button></div>
+    </section>
+    <section>
+      <h2>在線列車 <span class="n"><span id="count">0</span> 本</span></h2>
+      <p id="empty">まだ列車がいません。上の時刻表で平日/土休日を選ぶか、下の「列車を投入」から走らせます。</p>
+      <ul id="list"></ul>
+      <ul id="ttlist"></ul>
+    </section>
+    <details class="card" id="opscard">
+      <summary>運用の編集</summary>
+      <div class="inline"><input id="cloudkey" type="password" placeholder="編集キー" autocomplete="off"><button id="cloudkeyset">キーを使う</button></div>
+      <p id="cloudmsg" class="hint"></p>
+      <p id="opsstat" class="hint"></p>
+      <label class="row"><span>駅</span><select id="opsst"></select></label>
+      <ul id="opsvan" class="opsl"></ul>
+      <div class="btns"><button id="opslink" class="primary" disabled>消える1本と現れる1本を選んでつなぐ</button></div>
+      <h3 class="opsh">回送を追加</h3>
+      <div class="opsform">
+        <label>列車番号<input id="dhno" placeholder="回607C"></label>
+        <label>両数<select id="dhcars"><option>4</option><option>6</option><option selected>8</option><option>12</option></select></label>
+        <label>発駅<select id="dhfrom"></select></label>
+        <label>発<input id="dhdep" placeholder="10:15"></label>
+        <label>着駅<select id="dhto"></select></label>
+        <label>着<input id="dharr" placeholder="10:40"></label>
+        <label>前の列車<input id="dhprev" placeholder="(発駅に着く列車)"></label>
+        <label>次の列車<input id="dhnext" placeholder="(着駅から出る列車)"></label>
+      </div>
+      <div class="btns"><button id="dhadd">回送を追加</button></div>
+      <p id="dhmsg" class="hint"></p>
+      <h3 class="opsh">編集の一覧</h3>
+      <ul id="opsedits" class="opse"></ul>
+      <div id="opsmsg"></div>
+      <div class="btns"><button id="opsapply" class="primary">反映(計算し直す)</button></div>
+      <div class="btns"><button id="opsexp">書き出す</button><button id="opsimp">読み込む</button><button id="opsclr" class="danger">ブラウザの編集を消す</button></div>
+      <input id="opsfile" type="file" accept=".json,application/json" hidden>
+      <p class="hint">駅を選ぶと、その駅で消える列車(消)と現れる列車(現)が時刻順に出ます。消と現を1本ずつ押して「つなぐ」。「回送」で、その列車につながる回送の入力欄が埋まります。地図で列車を選ぶと、詳細につながりを切る・回送を直すボタンが出ます。編集はこのブラウザに保存されます。いつも効くようにするには「書き出す」で ops_user.json を保存して渡してください。</p>
+    </details>
+    <details class="card" id="addcard" open>
+      <summary>列車を投入(手動)</summary>
+      <label class="row"><span>始発</span><select id="org"></select></label>
+      <div class="row"><span>種別</span><div id="types"></div></div>
+      <label class="row"><span>行先</span><select id="dst"></select></label>
+      <label class="row"><span>到着後</span><select id="after"><option value="stay">ホームに停車したまま</option><option value="remove">消去する(入庫扱い)</option></select></label>
+      <button id="go" class="primary">投入</button>
+      <p id="msg"></p>
+      <div class="btns"><button id="demo">デモ列車を投入</button><button id="clear" class="danger">手動列車を消去</button></div>
+      <label class="subrow">手動列車の速さ <input id="speed" type="range" min="-2" max="3" step="0.5" value="0"><span id="speedv">×1</span></label>
+    </details>
+    <details class="card" id="helpcard">
+      <summary>使い方</summary>
+      <p class="hint">上の時刻表で平日/土休日を選ぶと、2025年京急全線時刻表どおりに列車が走ります(スライダーで時刻を移動、列車をクリックすると時刻を表示)。手動投入は、図の線路をクリックするとその位置から投入できます(ホーム付近は停止位置に吸着)。列車をクリックすると選択され、行先変更・折り返し・抑止・削除ができます。※ と # は次の段への接続です。泉岳寺では都営浅草線(押上方面)からの列車が京急本線と西馬込方面に分かれます。始発・行先に「都営浅草線」を選ぶと直通列車になります。</p>
+    </details>
+  </aside>
+</main>
+<script>
+const D = /*DATA*/;
+/*CORE*/
+/*DISP*/
+/*UI*/
+/*DISPUI*/
+</script>
+<div id="ttops" hidden></div>
+<script>
+// ===== 見た目の補助(アイコン・テーマ・設定メニュー・ショートカット) =====
+(() => {
+  const ICON = {
+    pause: '<svg class="ico" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" class="fill"/><rect x="14" y="5" width="4" height="14" rx="1" class="fill"/></svg>',
+    play: '<svg class="ico" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z" class="fill"/></svg>',
+    sun: '<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+    moon: '<svg class="ico" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>'
+  };
+  const $ = id => document.getElementById(id), root = document.documentElement;
+  const store = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+  // 再生ボタン: ui.js の running を切り替え、アイコンで状態を出す
+  const pb = $('play');
+  const paint = () => { const r = typeof running === 'undefined' || running; pb.innerHTML = r ? ICON.pause : ICON.play; pb.setAttribute('aria-label', r ? '一時停止' : '再開'); document.body.classList.toggle('running', r); $('livestate').textContent = r ? '運行中' : '一時停止中'; };
+  pb.onclick = () => { running = !running; paint(); };
+  paint();
+  // テーマ
+  const tb = $('theme');
+  const paintTheme = () => { tb.innerHTML = root.dataset.theme === 'light' ? ICON.moon : ICON.sun; };
+  tb.onclick = () => { root.dataset.theme = root.dataset.theme === 'light' ? 'dark' : 'light'; store('kq-theme', root.dataset.theme); paintTheme(); };
+  paintTheme();
+  // 設定メニュー: 外側クリック・Esc で閉じる
+  const menu = $('setmenu');
+  document.addEventListener('click', e => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
+  // 折りたたみの状態を覚える
+  ['addcard', 'helpcard'].forEach(id => { const d = $(id), v = store('kq-' + id); if (v != null) d.open = v === '1'; d.addEventListener('toggle', () => store('kq-' + id, d.open ? '1' : '0')); });
+  // 配線図の拡大・縮小(ボタン・Ctrl+ホイール。ポインタの位置を中心に)
+  const wrap = document.querySelector('.mapwrap'), map = $('map'), ZL = [1, 1.25, 1.5, 2, 2.5, 3, 4];
+  let zi = Math.max(0, ZL.indexOf(+store('kq-zoom')));
+  const zoomTo = (i, cx, cy) => {
+    i = Math.max(0, Math.min(ZL.length - 1, i)); if (i === zi && map.style.width) return;
+    const r = wrap.getBoundingClientRect(), px = cx == null ? r.width / 2 : cx - r.left, py = cy == null ? r.height / 2 : cy - r.top;
+    const fx = (wrap.scrollLeft + px) / wrap.scrollWidth, fy = (wrap.scrollTop + py) / wrap.scrollHeight;
+    zi = i; map.style.width = ZL[i] * 100 + '%'; map.style.minWidth = ZL[i] * 900 + 'px';
+    wrap.scrollLeft = fx * wrap.scrollWidth - px; wrap.scrollTop = fy * wrap.scrollHeight - py;
+    $('zv').textContent = Math.round(ZL[i] * 100) + '%'; store('kq-zoom', ZL[i]);
+  };
+  $('zin').onclick = () => zoomTo(zi + 1); $('zout').onclick = () => zoomTo(zi - 1); $('zv').onclick = () => zoomTo(0);
+  wrap.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); zoomTo(zi + (e.deltaY < 0 ? 1 : -1), e.clientX, e.clientY); }, { passive: false });
+  { const z = zi; zi = -1; zoomTo(z); }
+  // キー操作: Space=一時停止/再開、Esc=メニューを閉じる
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && menu.open) { menu.open = false; menu.querySelector('summary').focus(); return; }
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (e.code === 'Space' && !/input|select|textarea|button|summary/.test(tag) && !e.target.isContentEditable) { e.preventDefault(); pb.click(); }
+  });
+})();
+</script>
+</body>
+</html>

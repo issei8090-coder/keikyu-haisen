@@ -1,0 +1,8 @@
+{
+  "name": "keikyu-haisen-save",
+  "private": true,
+  "description": "京急配線シミュレーターの編集を GitHub に保存するサーバー(Render)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" }
+}
