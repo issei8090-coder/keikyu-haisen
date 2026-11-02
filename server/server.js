@@ -37,6 +37,26 @@ function writeFile(kind, data) {
   return p;
 }
 
+// 画面(index.html)もここから出す。rootDir が server なので repo の最新を GitHub から取って覚えておく(60秒ごとに ETag で確かめる)
+const zlib = require('zlib');
+const page = { etag: null, html: null, gz: null, at: 0 };
+async function loadPage() {
+  if (page.html && Date.now() - page.at < 60000) return;
+  const r = await fetch('https://raw.githubusercontent.com/' + REPO + '/' + BRANCH + '/index.html', { headers: page.etag ? { 'If-None-Match': page.etag } : {} });
+  page.at = Date.now();
+  if (r.status === 304) return;
+  if (!r.ok) { if (page.html) return; throw new Error('GitHub ' + r.status); }
+  page.html = Buffer.from(await r.arrayBuffer());
+  page.gz = zlib.gzipSync(page.html);
+  page.etag = r.headers.get('etag');
+}
+async function sendPage(req, res) {
+  await loadPage();
+  const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', ...(gz ? { 'Content-Encoding': 'gzip' } : {}) });
+  res.end(gz ? page.gz : page.html);
+}
+
 function send(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': ALLOWED_ORIGIN, 'Access-Control-Allow-Methods': 'GET,PUT,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,X-Edit-Key' });
   res.end(JSON.stringify(obj));
@@ -46,7 +66,7 @@ http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     if (req.method === 'OPTIONS') return send(res, 204, {});
-    if (req.method === 'GET' && url.pathname === '/') { res.writeHead(302, { Location: 'https://issei8090-coder.github.io/keikyu-haisen/' }); return res.end(); }   // 画面は GitHub Pages
+    if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return sendPage(req, res);
     if (url.pathname === '/healthz') return send(res, 200, { ok: true, token: !!GITHUB_TOKEN, key: !!(EDIT_KEY || EDIT_KEY_SHA256) });
     const m = /^\/api\/edits\/(ops|signals)$/.exec(url.pathname);
     if (req.method === 'GET' && m) { const f = await readFile(m[1]); return send(res, 200, { data: f.data }); }
