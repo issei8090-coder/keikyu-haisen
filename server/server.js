@@ -2,12 +2,14 @@
 // 画面の「運用の編集」「信号機の編集」を受け取り、GitHub のリポジトリの data/*.json に書く(無料プランで休止しても消えない)
 // 読むのは画面が GitHub の raw から直接読む。ここは書くだけ(と確認用の GET)
 // 環境変数: GITHUB_TOKEN(このリポジトリの Contents に書ける token)、EDIT_KEY(書くときの合言葉)、REPO、BRANCH、ALLOWED_ORIGIN
-const http = require('http');
-const { GITHUB_TOKEN, EDIT_KEY, REPO = 'issei8090-coder/keikyu-haisen', BRANCH = 'main', ALLOWED_ORIGIN = '*' } = process.env;
+const http = require('http'), crypto = require('crypto');
+const { GITHUB_TOKEN, EDIT_KEY, EDIT_KEY_SHA256, REPO = 'issei8090-coder/keikyu-haisen', BRANCH = 'main', ALLOWED_ORIGIN = '*' } = process.env;
 const PORT = process.env.PORT || 10000;
 const FILES = { ops: 'data/ops_user.json', signals: 'data/disp_signals.json' };
 const LABEL = { ops: '運用の編集', signals: '信号機の編集' };
 const MAX = 4 * 1024 * 1024;
+// 編集キーの照合: EDIT_KEY(そのもの)か EDIT_KEY_SHA256(キーの SHA-256。render.yaml に書けるので Render の画面で入れなくてよい)
+const keyOK = k => !!k && ((EDIT_KEY && k === EDIT_KEY) || (EDIT_KEY_SHA256 && crypto.createHash('sha256').update(String(k)).digest('hex') === EDIT_KEY_SHA256));
 
 const gh = (path, opt = {}) => fetch('https://api.github.com/repos/' + REPO + '/contents/' + path + (opt.method ? '' : '?ref=' + BRANCH), {
   ...opt, headers: { Authorization: 'Bearer ' + GITHUB_TOKEN, Accept: 'application/vnd.github+json', 'User-Agent': 'keikyu-haisen-save', ...(opt.headers || {}) } });
@@ -44,13 +46,14 @@ http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://x');
     if (req.method === 'OPTIONS') return send(res, 204, {});
-    if (url.pathname === '/healthz') return send(res, 200, { ok: true, token: !!GITHUB_TOKEN, key: !!EDIT_KEY });
+    if (req.method === 'GET' && url.pathname === '/') { res.writeHead(302, { Location: 'https://issei8090-coder.github.io/keikyu-haisen/' }); return res.end(); }   // 画面は GitHub Pages
+    if (url.pathname === '/healthz') return send(res, 200, { ok: true, token: !!GITHUB_TOKEN, key: !!(EDIT_KEY || EDIT_KEY_SHA256) });
     const m = /^\/api\/edits\/(ops|signals)$/.exec(url.pathname);
     if (req.method === 'GET' && m) { const f = await readFile(m[1]); return send(res, 200, { data: f.data }); }
-    if (req.method === 'POST' && url.pathname === '/api/check') return send(res, EDIT_KEY && req.headers['x-edit-key'] === EDIT_KEY ? 200 : 403, { ok: req.headers['x-edit-key'] === EDIT_KEY });
+    if (req.method === 'POST' && url.pathname === '/api/check') { const ok = keyOK(req.headers['x-edit-key']); return send(res, ok ? 200 : 403, { ok }); }
     if (req.method === 'PUT' && m) {
-      if (!GITHUB_TOKEN || !EDIT_KEY) return send(res, 500, { error: 'サーバーの設定(GITHUB_TOKEN / EDIT_KEY)がありません' });
-      if (req.headers['x-edit-key'] !== EDIT_KEY) return send(res, 403, { error: '編集キーが違います' });
+      if (!GITHUB_TOKEN) return send(res, 500, { error: 'サーバーの設定(GITHUB_TOKEN)がありません' });
+      if (!keyOK(req.headers['x-edit-key'])) return send(res, 403, { error: '編集キーが違います' });
       let size = 0; const chunks = [];
       for await (const c of req) { size += c.length; if (size > MAX) return send(res, 413, { error: '大きすぎます' }); chunks.push(c); }
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));

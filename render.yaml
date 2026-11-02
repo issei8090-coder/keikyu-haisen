@@ -11,7 +11,7 @@ services:
     envVars:
       - key: GITHUB_TOKEN
         sync: false
-      - key: EDIT_KEY
-        sync: false
+      - key: EDIT_KEY_SHA256
+        value: b130b821ae69c4eff2841d4b8774078532f6b3dafb9f99cace9f25c85c67029e
       - key: ALLOWED_ORIGIN
         value: https://issei8090-coder.github.io
