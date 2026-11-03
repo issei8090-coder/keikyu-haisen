@@ -468,12 +468,40 @@ const DAISHI = new Set(['港町', '鈴木町', '川崎大師', '東門前', '大
 //  dh: 回送を足す(発駅・発時刻・着駅・着時刻・両数・前の列車・次の列車)   del: 自動で作った回送を消す
 //  計画でつなげなかったもの(引上線が空いていないなど)は list.userMsg に書き、画面に出す
 const ttHM = s => { const m = /^(\d{1,2}):(\d{2})$/.exec(String(s == null ? '' : s).trim()); if (!m) return null; let h = +m[1]; if (h < 4) h += 24; return h * 60 + +m[2]; };
+// 秒まで: "10:15" "10:15:30" → その日の秒(0〜3時台は翌日の深夜)。だめなら null
+const ttHMS = s => { const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(s == null ? '' : s).trim()); if (!m) return null; let h = +m[1]; if (h < 4) h += 24; return h * 3600 + +m[2] * 60 + (+m[3] || 0); };
+const ttSHMS = x => { if (x == null || isNaN(x)) return ''; x = Math.round(x); const h = Math.floor(x / 3600) % 24, m = Math.floor(x / 60) % 60, s = x % 60; return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + (s ? ':' + String(s).padStart(2, '0') : ''); };
+// 列車の見分け方(運用の編集の保存に使う): 列車番号@始発駅@発の分。同じ列車番号が途中で分かれていても区別できる
+const ttUKey = t => (t.no || '') + '@' + (t.names ? t.names[0] : t.ev[0].name) + '@' + t.ev[0].dep;
+// 運用の編集の列車ごとの設定(U.train[キー]、回送は dh[i].set):
+//  plat:  {駅名: 線} その駅で使う番線(待避線・副本線も)。終着駅の番線もここ
+//  turn:  {mode:'plat'|'sd', sd:引上線の線, lv:'HH:MM:SS' ホームを出る(入庫), back:'HH:MM:SS' ホームに着く(出庫)} 終着駅での次の運用への折り返し方
+//  fin:   {mode:'plat'|'sd', sd, lv} 1日の終わり(次の運用なし): ホームで夜間留置 / 留置線・車庫線へ入庫(lv=ホームを出る時刻)して朝まで
+//  begin: {mode:'plat'|'sd', sd, back} 1日の始まり(前の運用なし): ホームで夜間留置 / 留置線・車庫線から出庫(back=ホームに着く時刻)
+//  wait:  {del:[駅名], add:[{st, after, as, ds}]} 時刻表に無い通過待ち(推定)を消す・足す(after=その前に止まる駅、as/ds='HH:MM:SS')
 function ttUserOps(list) {
   const day = list.day || (typeof ttDay !== 'undefined' ? ttDay : '');
   const U = typeof USER_OPS !== 'undefined' && USER_OPS ? USER_OPS[day] : null;
   list.userMsg = [];
   if (!U) return;
   const msg = s => list.userMsg.push(s);
+  // 列車ごとの設定を付ける(時刻表の時刻は変えない。変えるのは時刻表に無い通過待ちだけ)
+  if (U.train) for (const t of list) {
+    const x = U.train[ttUKey(t)]; if (!x || t.unit || t.cut) continue;
+    t.uset = x;
+    const w = x.wait; if (!w) continue;
+    let ch = false;
+    const shift = (p, d) => { if (t.cpl && t.cpl.i >= p) t.cpl.i += d; if (t.tseg) t.tseg = t.tseg.map(([k, y]) => [k >= p ? k + d : k, y]); };   // 駅の添字を使うもの(増結の駅・種別の変わる駅)をずらす
+    for (const st of w.del || []) { const i = t.ev.findIndex((e, i) => i > 0 && i < t.ev.length - 1 && e.wait && e.name === st); if (i > 0) { t.ev.splice(i, 1); shift(i + 1, -1); ch = true; } }
+    for (const a of w.add || []) {
+      const i = t.ev.findIndex(e => e.name === a.after), as = ttHMS(a.as), ds = ttHMS(a.ds);
+      if (i < 0 || i >= t.ev.length - 1 || !stByName.has(a.st) || as == null || ds == null || ds < as) { msg(`${t.no}: 通過待ち ${a.st} を入れられません(駅・時刻を確かめてください)`); continue; }
+      const P0 = t.ev[i].ds != null ? t.ev[i].ds : t.ev[i].dep * 60, A1 = t.ev[i + 1].as != null ? t.ev[i + 1].as : t.ev[i + 1].arr * 60 + 59;
+      if (as <= P0 || ds >= A1) { msg(`${t.no}: 通過待ち ${a.st} の時刻が前後の駅(${t.ev[i].name}・${t.ev[i + 1].name})の時刻表の時刻と合いません`); continue; }
+      t.ev.splice(i + 1, 0, { name: a.st, arr: Math.floor(as / 60), dep: Math.floor(ds / 60), as, ds, wait: true, user: true }); shift(i + 1, 1); ch = true;
+    }
+    if (ch) ttSchedule(t);
+  }
   const endAt = (no, st) => list.find(t => t.no === no && t.names[t.names.length - 1] === st && !t.exitEnd);
   const startAt = (no, st) => list.find(t => t.no === no && t.names[0] === st && !t.exitStart);
   const cut = a => { if (a && a.next) { a.next.prev = null; a.next = null; } };
@@ -485,13 +513,31 @@ function ttUserOps(list) {
     const t = list[i]; cutP(t); cut(t); list.splice(i, 1);
   }
   for (const x of U.dh || []) {
-    const d0 = ttHM(x.dep), a1 = ttHM(x.arr);
-    if (d0 == null || a1 == null || a1 <= d0) { msg(`回送 ${x.no || ''}: 時刻が正しくありません(${x.dep}→${x.arr})`); continue; }
-    if (!stByName.has(x.from) || !stByName.has(x.to)) { msg(`回送 ${x.no || ''}: 駅名が見つかりません(${x.from}→${x.to})`); continue; }
-    const t = { no: x.no || '回送', type: 'kaiso', dest: x.to, cars: +x.cars || 8, fl: 0, x0: '', x1: '', tseg: null, ev: [{ name: x.from, arr: d0, dep: d0 }, { name: x.to, arr: a1, dep: a1 }], tt: true, s: 0, g: null, route: undefined, prev: null, next: null, k0: 0, dh: true, user: x };
+    // 停車・通過する駅の並び(stops)。古い形(発駅・発・着駅・着だけ)も読む
+    const stops = x.stops && x.stops.length >= 2 ? x.stops : [{ st: x.from, dep: x.dep }, { st: x.to, arr: x.arr }];
+    const ev = [], bad = [];
+    stops.forEach((s, i) => {
+      if (!stByName.has(s.st)) { bad.push(`駅名 ${s.st || '(空)'}`); return; }
+      const last = i === stops.length - 1, A0 = ttHMS(s.arr), D0 = ttHMS(s.dep);
+      let a, d;
+      if (i === 0) { d = D0 != null ? D0 : A0; a = d == null ? null : d - 20; }   // 始発駅: 発車の20秒前にホームに着いている
+      else if (last) a = d = A0 != null ? A0 : D0;
+      else if (s.pass) a = d = A0 != null ? A0 : D0;
+      else { a = A0 != null ? A0 : D0; d = D0 != null ? D0 : A0; }
+      if (a == null || d == null) { bad.push(`${s.st} の時刻`); return; }
+      if (d < a) { bad.push(`${s.st} の発が着より前`); return; }
+      if (ev.length && a <= ev[ev.length - 1].ds) bad.push(`${s.st} の時刻が前の駅より前`);
+      ev.push({ name: s.st, arr: Math.floor(a / 60), dep: Math.floor(d / 60), as: a, ds: d, thru: !!(s.pass && i > 0 && i < stops.length - 1), wait: !s.pass && i > 0 && i < stops.length - 1 && d - a >= 60 });
+    });
+    if (bad.length || ev.length < 2) { msg(`回送 ${x.no || ''}: ${bad.join('・') || '駅が2つ以上必要です'}`); continue; }
+    const from = ev[0].name, to = ev[ev.length - 1].name, d0 = ev[0].dep, a1 = ev[ev.length - 1].arr;
+    const t = { no: x.no || '回送', type: 'kaiso', dest: to, cars: +x.cars || 8, fl: 0, x0: '', x1: '', tseg: null, ev, tt: true, s: 0, g: null, route: undefined, prev: null, next: null, k0: 0, dh: true, user: x };
     ttSchedule(t); list.push(t);
-    if (x.prev) { const a = endAt(x.prev, x.from); if (!a) msg(`回送 ${t.no}: 前の列車 ${x.prev}(${x.from}止まり)が見つかりません`); else if (a.ev[a.ev.length - 1].arr > d0) msg(`回送 ${t.no}: 前の列車 ${x.prev} が着く前に発車します`); else join(a, t, x); }
-    if (x.next) { const d = startAt(x.next, x.to); if (!d) msg(`回送 ${t.no}: 次の列車 ${x.next}(${x.to}始発)が見つかりません`); else if (d.ev[0].dep < a1) msg(`回送 ${t.no}: 次の列車 ${x.next} の発車に間に合いません`); else join(t, d, x); }
+    const set = { plat: Object.assign({}, x.plat || {}), turn: x.turn || null, fin: x.fin || null, begin: x.begin || null };
+    stops.forEach(s => { if (s.plat != null && s.plat !== '') set.plat[s.st] = +s.plat; });
+    t.uset = set;
+    if (x.prev) { const a = endAt(x.prev, from); if (!a) msg(`回送 ${t.no}: 前の列車 ${x.prev}(${from}止まり)が見つかりません`); else if (a.ev[a.ev.length - 1].arr > d0) msg(`回送 ${t.no}: 前の列車 ${x.prev} が着く前に発車します`); else join(a, t, x); }
+    if (x.next) { const d = startAt(x.next, to); if (!d) msg(`回送 ${t.no}: 次の列車 ${x.next}(${to}始発)が見つかりません`); else if (d.ev[0].dep < a1) msg(`回送 ${t.no}: 次の列車 ${x.next} の発車に間に合いません`); else join(t, d, x); }
   }
   for (const x of U.cut || []) {
     const a = endAt(x.a, x.st); if (!a) { msg(`切る: ${x.a}(${x.st}止まり)が見つかりません`); continue; }
@@ -509,6 +555,8 @@ function ttUserOps(list) {
 function ttUserCheck(list) {
   const out = (list.userMsg || []).slice();
   for (const a of list) if (a.userLink && a.next !== a.userLink) out.push(`${a.no} → ${a.userLink.no}(${a.names[a.names.length - 1]}): 計画でつなげませんでした` + (a.tail === null || !a.tail ? '(引上線・ホームが空いていない見込み)' : ''));
+  for (const t of list) for (const s of t.userErr || []) out.push(`${t.no}(${t.names[0]} ${ttSHMS(t.ev[0].dep * 60)}発): ${s}`);
+  for (const t of list) for (const c of t.userConf || []) out.push(`${t.no}: ${c.text}` + (c.by.length ? `(原因: ${c.by.map(x => x.no).join('・')})` : ''));
   return out;
 }
 function ttLink(list) { const g = ttLinkG(list); for (;;) { const r = g.next(); if (r.done) return r.value; } }
@@ -1150,6 +1198,10 @@ function* ttLinkG(list) {
 // 車庫へ出入りできる終着駅。ここでは運行番号が同じ列車どうしをつなぎ、折り返しまで長くあく車両はいったん車庫の線へ入れる
 const DEPOT_ST = new Set(['西馬込', '京成高砂', '京成津田沼', '京成臼井', '宗吾参道', '印旛日本医大', '金沢文庫']), DEPOT_MAX = 240;
 const SHINA = '品川', SHINA_TURN = 4, SHINA_AM = 10 * 60;
+// 検車区・車両基地(運用の編集で入庫・出庫に選べる)。図に車庫の線が無いところは、駅の引上線(無ければホーム)から出入りしたとみなす
+const DEPOT_NAME = { '神奈川新町': '新町検車区', '金沢文庫': '金沢検車区', '京急久里浜': '久里浜検車区', '西馬込': '馬込車両検修場', '京成高砂': '高砂検車区', '宗吾参道': '宗吾車両基地', '印旛日本医大': '印旛車両基地', '京成津田沼': '津田沼の留置線', '京成臼井': '臼井の留置線' };
+// 引上線・留置線の名前(画面と知らせに出す): 図の上から順に番号。車庫のある駅は「車庫線」
+for (const [st, l] of SIDINGS) l.slice().sort((a, b) => N[a.node].y - N[b.node].y || N[a.node].x - N[b.node].x).forEach((sd, i, a) => { sd.label = (DEPOT_NAME[st] && a.length > 2 ? '車庫線' : '引上線・留置線') + (a.length > 1 ? ' ' + (i + 1) : ''); });
 const NOREV = new Set([SHINA, '泉岳寺', '青砥', '京成高砂']);
 // 京成・北総の途中駅も、ホームでそのまま折り返すと逆線を走ることになるので同じ扱い(行き止まりの終着駅は除く)
 const noRev = nm => NOREV.has(nm) || (!TERMINI.has(nm) && stByName.has(nm) && stByName.get(nm).stops.length > 0 && N[E[stByName.get(nm).stops[0][0]].a].y > KS_Y);   // ホームでそのまま逆向きに折り返せない駅(引上線を使う)
@@ -1392,6 +1444,9 @@ function ttPlanner(useSiding) {
     units.push(u); stat.couple++;
   }
   const isFreeAt = (e, a, b, own) => { const l = res.get(e); if (!l) return true; for (const r of l) if (r[0] < b && a < r[1] && r[2] !== own) return false; return true; };
+  // その線を a〜b に使うほかの列車(運用の編集で「原因の列車」として出す)
+  const whoAt = (e, a, b, own) => { const o = []; for (const r of res.get(e) || []) if (r[0] < b && a < r[1] && r[2] && r[2] !== own && r[2] !== (own && own.next) && r[2] !== (own && own.prev) && !o.includes(r[2])) o.push(r[2]); return o; };
+  const uConf = (t, kind, st, e, a, b, by, text) => { (t.userConf || (t.userConf = [])).push({ kind, st, e, a, b, by: by.filter(x => x.no).map(x => ({ no: x.no, key: ttUKey(x) })), text }); };
   // 成田空港: 島式ホームの2本の線は、上野寄り(本線の列車)と車止め側(スカイライナー)が同じ線路の縦列。
   //  ・車止め側へ出入りする列車は、その瞬間に上野寄りが空いていないと通れない
   //  ・上野寄りに止まる列車は、止まっている間に奥の列車が出入りしない線を選ぶ
@@ -1417,6 +1472,39 @@ function ttPlanner(useSiding) {
   };
   // 下調べ: その番線にしか入れない列車(例: 逗子線から金沢八景に入る列車)の分を先に押さえておく
   const clsOf = t => t.cpl ? (t.cpl.side === 'rear' ? 'in' : 'out') : FAST.has(t.type) ? 'in' : 'out';
+  // 運用の編集で指定した番線: {駅の添字: 線}
+  const forceOf = t => { const p = t.uset && t.uset.plat; if (!p) return null; const f = {}; let any = false; t.names.forEach((nm, i) => { if (p[nm] != null && p[nm] !== '' && !isNaN(+p[nm])) { f[i] = +p[nm]; any = true; } }); return any ? f : null; };
+  const uErr = (t, s) => { (t.userErr || (t.userErr = [])).push(s); };
+  const sdOf = (st, e) => (SIDINGS.get(st) || []).find(s => s.e === +e) || null;
+  // 運用の編集: 終着した t を、指定の引上線・留置線 sd へ lv(ホームを出る秒)に入れ、back(次の列車がホームに着く秒)に次の列車として出す
+  function userTurnSd(t, opt, sd, lv, back) {
+    const n = t.names.length, nx = t.next, ta = t.A[t.A.length - 1], dep0 = nx.ev[0].dep * 60;
+    const al0 = ttAllow(nx), full0 = stByName.get(nx.names[0]).stopMap; let m0 = full0;
+    const nf = forceOf(nx);
+    if (nf && nf[0] != null && full0.has(nf[0])) { m0 = new Map([[nf[0], full0.get(nf[0])]]); m0.name = full0.name; }
+    else if (al0) { const f = new Map([...full0].filter(([e]) => al0(0, e))); f.name = full0.name; if (f.size) m0 = f; }
+    const back1 = findRoute({ e: sd.e, t: sd.t }, nx.names.length > 1 ? [m0, stByName.get(nx.names[1]).stopMap] : [m0], null, null, false);
+    if (back1.fail) return `${sd.label || '引上線'}から${nx.no}の発車する番線へ行けません`;
+    t.tail = sd;
+    const r = buildTimedRoute(t.names, t.long, Object.assign({}, opt, { tail: sd, after: null }));
+    if (!r || r.stopD.length !== t.k0 + n + 1) { t.tail = null; return `着いた番線から${sd.label || '引上線'}へ入れません`; }
+    const out = r.stopD[r.stopD.length - 1] - r.stopD[r.stopD.length - 2];
+    const tOut = Math.max(15, Math.min(45, out / 2.5)), tBack = Math.max(15, Math.min(45, back1.stops[0].d / 2.5));
+    if (lv == null) lv = ta + 40;
+    if (back == null) back = dep0 - 50;
+    if (lv < ta + 20) { t.tail = null; return `ホームを出る時刻 ${ttSHMS(lv)} が着いた時刻 ${ttSHMS(ta)} より早すぎます`; }
+    if (back > dep0 - 10) { t.tail = null; return `ホームに着く時刻 ${ttSHMS(back)} が${nx.no}の発車 ${ttSHMS(dep0)} に近すぎます`; }
+    if (back - tBack < lv + tOut + 10) { t.tail = null; return `引上線にいる時間がありません(入る ${ttSHMS(lv)} → 戻る ${ttSHMS(back)})`; }
+    { const by = whoAt(sd.e, lv, back, t); if (by.length) uConf(t, 'sd', t.names[n - 1], sd.e, lv, back, by, `${sd.label || '引上線'}を ${ttSHMS(lv)}〜${ttSHMS(back)} にほかの列車も使います`); }
+    t.P[t.P.length - 1] = lv; t.A.push(lv + tOut); t.P.push(lv + tOut); t.end = lv + tOut;
+    nx.fromSiding = sd; nx.k0 = 1;
+    nx.A[0] = back; nx.P[0] = Math.max(dep0, nx.P[0]);
+    nx.A.unshift(t.end); nx.P.unshift(back - tBack); nx.start = t.end;
+    reserve(sd.e, lv, back, t); stat.userTurn = (stat.userTurn || 0) + 1;
+    const pe = cutAt(back1, back1.stops[0].d).pop().e;
+    reserve(pe, back - 5 - tBack, dep0 + 5, nx); res.get(pe)[res.get(pe).length - 1][3] = true; nx.preRes = pe;
+    return r;   // 経路(だめなら理由の文字列)
+  }
   function pre(t) {
     { const st = t.names[t.names.length - 1];   // 運用の編集でつないだ組: 先に計画する列車に引上線を取られないよう、発車前の約3分を押さえておく(plan の最初で外す)
       if (t.userLink && t.next === t.userLink && !t.exitEnd && !t.dh && SIDINGS.has(st) && noRev(st)) { const sd = SIDINGS.get(st)[0], dep0 = t.next.ev[0].dep * 60; reserve(sd.e, dep0 - 200, dep0 - 50, t); const l = res.get(sd.e); l[l.length - 1][3] = true; l[l.length - 1][4] = 'upre'; t.upre = sd.e; } }
@@ -1425,7 +1513,7 @@ function ttPlanner(useSiding) {
       if (t.cpl.e == null) t.cpl = null;
       else { const s = span(t, t.cpl.i); reserve(t.cpl.e, s[0], s[1], t); res.get(t.cpl.e)[res.get(t.cpl.e).length - 1][3] = true; }
     }
-    const r = buildTimedRoute(t.names, t.long, { exitStart: t.exitStart, exitEnd: t.exitEnd, probe: true, cls: clsOf(t), allow: ttAllow(t) });
+    const r = buildTimedRoute(t.names, t.long, { exitStart: t.exitStart, exitEnd: t.exitEnd, probe: true, cls: clsOf(t), allow: ttAllow(t), force: forceOf(t) });
     if (!r) return;
     r.stopE.forEach((e, i) => { if (e != null && r.only[i] && !(t.cpl && i === t.cpl.i)) { const s = span(t, i); reserve(e, s[0], s[1], t); res.get(e)[res.get(e).length - 1][3] = true; } });
     r.stopE.forEach((e, i) => { if (e == null || (t.ev[i] && t.ev[i].thru)) return; const s = span(t, i); if (!soft.has(e)) soft.set(e, []); soft.get(e).push([s[0], s[1], t]); });
@@ -1438,7 +1526,7 @@ function ttPlanner(useSiding) {
     let startAt = null, startExtra = false;
     if (t.fromSiding) { startAt = { e: t.fromSiding.e, t: t.fromSiding.t }; startExtra = true; }
     else if (t.prev && t.prev.route) { const g = t.prev.route.segs[t.prev.route.segs.length - 1]; startAt = { e: g.e, t: g.t1 }; }
-    const opt = { cls: clsOf(t), allow: ttAllow(t), exitStart: t.exitStart, exitEnd: t.exitEnd, startAt, startExtra, after: t.next && !t.exitEnd ? t.next.names[1] : null, longTurn: t.next && !TERMINI.has(t.names[n - 1]) && span(t, n - 1)[1] - span(t, n - 1)[0] > 300 ? 600 : 0,
+    const opt = { cls: clsOf(t), allow: ttAllow(t), force: forceOf(t), exitStart: t.exitStart, exitEnd: t.exitEnd, startAt, startExtra, after: t.next && !t.exitEnd ? t.next.names[1] : null, longTurn: t.next && !TERMINI.has(t.names[n - 1]) && span(t, n - 1)[1] - span(t, n - 1)[0] > 300 ? 600 : 0,
       isFree: (i, e) => { if (t.cpl && i === t.cpl.i) return e === t.cpl.e; for (const pf of [t.taka, t.aoto, t.nk, t.na, t.sg]) if (pf && i === pf.q && e === pf.alt && pf.alt !== pf.pref) { const s = span(t, i); if (isFreeAt(pf.pref, s[0], s[1], t)) return false; } if (i === n - 1 && t.forceEnd != null) return e === t.forceEnd; const s = span(t, i);
         // 途中駅(京急川崎など)で5分以上止まって折り返す: ほかの列車が通る予定の番線は、ほかに空いた番線があれば使わない
         if (i === n - 1 && t.next && s[1] - s[0] > 300 && !TERMINI.has(t.names[i])) { const ok = x => isFreeAt(x, s[0], s[1], t) && softFree(x, s[0], s[1], t); if (!ok(e) && [...stByName.get(t.names[i]).stopMap.keys()].some(x => x !== e && ok(x))) return false; }
@@ -1455,8 +1543,24 @@ function ttPlanner(useSiding) {
     let route = null;
     // 引上線に上げる折り返し
     const nx = t.next, ta = t.A[t.A.length - 1];
+    // 運用の編集で折り返し方を決めた列車: 'plat' = ホームでそのまま折り返す(引上線を使わない) / 'sd' = 指定の引上線・留置線へ、指定の時刻に
+    const uTurn = nx && !t.exitEnd && t.uset && t.uset.turn && (t.uset.turn.mode === 'plat' || t.uset.turn.mode === 'sd') ? t.uset.turn : null;
+    if (uTurn && uTurn.mode === 'sd') {
+      // 指定の線に入れなければ、同じ駅のほかの引上線・留置線を(空いている順に)試す。時刻の指定はそのまま
+      const sd0 = sdOf(t.names[n - 1], uTurn.sd), lv = ttHMS(uTurn.lv), back = ttHMS(uTurn.back), dep0 = nx.ev[0].dep * 60;
+      const others = (SIDINGS.get(t.names[n - 1]) || []).filter(x => x !== sd0).sort((x, y) => (isFreeAt(x.e, lv || ta + 40, back || dep0 - 50, t) ? 0 : 1) - (isFreeAt(y.e, lv || ta + 40, back || dep0 - 50, t) ? 0 : 1));
+      let why = sd0 ? null : `${t.names[n - 1]}に指定の引上線・留置線がありません`;
+      for (const sd of [sd0, ...others].filter(Boolean)) {
+        if (sd !== sd0 && !isFreeAt(sd.e, lv || ta + 40, back || dep0 - 50, t)) break;   // ほかの線は空いているものだけ
+        const r = userTurnSd(t, opt, sd, lv, back);
+        if (typeof r !== 'string') { route = r; if (sd !== sd0 && sd0 && !uTurn.auto) uErr(t, `折り返し: ${why}。代わりに${sd.label}を使いました`); break; }
+        if (sd === sd0) why = r; else if (!why) why = r;
+        if (/時刻|時間/.test(r)) break;   // 時刻の指定が合わないのは線を変えても同じ
+      }
+      if (!route) uErr(t, '折り返し: ' + (why || '引上線・留置線へ入れません') + '(自動で決めました)');
+    }
     // 品川の3番線: 普通(とウィング号)の品川止まりは3番線に入って、そのまま下りの列車として折り返す(引上線を使わない)。3番線がふさがっていれば今までどおり
-    if (nx && t.names[n - 1] === SHINA && SHINA_E && SHINA_E.length === 3 && !t.exitEnd && !t.dh && !t.cpl && (t.type === 'local' || t.type === 'wing') && nx.names[1] !== '泉岳寺' && nx.route === undefined) {
+    if (!route && !uTurn && nx && t.names[n - 1] === SHINA && SHINA_E && SHINA_E.length === 3 && !t.exitEnd && !t.dh && !t.cpl && (t.type === 'local' || t.type === 'wing') && nx.names[1] !== '泉岳寺' && nx.route === undefined) {
       const e3 = SHINA_E[2], dep0 = nx.ev[0].dep * 60;
       if (isFreeAt(e3, ta - 45, dep0 + 45, t) && softFree(e3, ta - 45, dep0 + 45, t)) {
         t.sh3 = nx.sh3 = true;
@@ -1464,7 +1568,7 @@ function ttPlanner(useSiding) {
         if (r && r.stopE[n - 1] === e3) { route = r; stat.sh3 = (stat.sh3 || 0) + 1; } else t.sh3 = nx.sh3 = false;
       }
     }
-    if (!route && useSiding && nx && !t.exitEnd && nx.ev[0].dep - t.ev[n - 1].arr >= (noRev(t.names[n - 1]) ? SHINA_TURN : SIDING_MIN) && SIDINGS.has(t.names[n - 1])) {
+    if (!route && !(uTurn && uTurn.mode === 'plat') && useSiding && nx && !t.exitEnd && nx.ev[0].dep - t.ev[n - 1].arr >= (noRev(t.names[n - 1]) ? SHINA_TURN : SIDING_MIN) && SIDINGS.has(t.names[n - 1])) {
       const dep0 = nx.ev[0].dep * 60;
       // 縦列停車できない駅(金沢文庫)では、ふさがったホームへ入る引上げは使わない。代わりに、空いたホームから向きを変えて留置線へ下がる形も試す
       const strict = NO_TANDEM.has(t.names[n - 1]);
@@ -1518,9 +1622,10 @@ function ttPlanner(useSiding) {
         break sidingLoop;
       }
     }
-    if (!route && nx && noRev(t.names[n - 1]) && !t.exitEnd && t.names[n - 1] !== '京成成田' && !t.dh) {   // 回送は、着いた向きのまま次の列車になる   // 京成成田は中線(上下共用)で向きを変えられる: 着いたホームからそのまま折り返す
+    if (!route && !(uTurn && uTurn.mode === 'plat') && nx && noRev(t.names[n - 1]) && !t.exitEnd && t.names[n - 1] !== '京成成田' && !t.dh) {   // 回送は、着いた向きのまま次の列車になる   // 京成成田は中線(上下共用)で向きを変えられる: 着いたホームからそのまま折り返す
       // 品川ではホームでそのまま下りに折り返せない。引上線が使えなければ、着いた列車は回送で出たとみなし、次の列車は1番線から出す
       const d = nx; t.next = null; d.prev = null; stat.unpaired = (stat.unpaired || 0) + 1;
+      if (t.uset || d.uset || t.userLink === d) uErr(t, `${t.names[n - 1]}で${d.no}へ折り返せませんでした(ホームで向きを変えられない駅で、引上線が使えない。番線・引上線の指定を確かめてください)`);
       t.end = t.P[t.P.length - 1] = t.A[t.A.length - 1] + 25;
       d.A[0] = d.ev[0].dep * 60 - 25; d.P[0] = d.ev[0].ds != null ? Math.max(d.ev[0].ds, d.ev[0].dep * 60 + 5) : d.ev[0].dep * 60 + 5; d.start = d.A[0];
       opt.after = null;
@@ -1533,6 +1638,9 @@ function ttPlanner(useSiding) {
     if (t.cpl) { const l0 = res.get(t.cpl.e); if (l0) res.set(t.cpl.e, l0.filter(r => !(r[3] && r[2] === t))); }
     if (!route) return;
     if (t.cpl && route.stopE[t.cpl.i] !== t.cpl.e) t.cpl = null;   // 決めた番線に入れなかったら増結しない
+    if (opt.force) for (const k in opt.force) { const i = +k, e = route.stopE[i]; if (e == null) continue;   // 指定の番線: ほかの列車とぶつかるなら、その列車(原因)を記録する
+      if (e !== opt.force[k]) { uConf(t, 'link', t.names[i], opt.force[k], t.A[i + t.k0], t.P[i + t.k0], [], `${t.names[i]}の指定の番線へ線路がつながっていません(前後の駅の番線も確かめてください)`); continue; }
+    }
     t.off = [];
     if (t.cpl) cplList.push(t);
     route.stopE.forEach((e, i) => {
@@ -1584,7 +1692,7 @@ function ttPlanner(useSiding) {
   function deadheadAt(stn) {
     const sds = SIDINGS.get(stn) || [];
     for (const d of planned) {
-      if (d.names[0] !== stn || d.prev || d.exitStart || d.fromSiding || d.k0 !== 0) continue;
+      if (d.names[0] !== stn || d.prev || d.exitStart || d.fromSiding || d.k0 !== 0 || (d.uset && d.uset.begin)) continue;
       const dep0 = d.ev[0].dep * 60;
       for (const from of [dep0 - 110, dep0 - 80, dep0 - 150]) for (const sd of sds) {
         if (d.fromSiding || !isFreeAt(sd.e, from, dep0 - 20, d) || !enterFrom(d, sd, from)) continue;
@@ -1594,7 +1702,7 @@ function ttPlanner(useSiding) {
     }
     for (const t of planned) {
       const n = t.names.length;
-      if (t.names[n - 1] !== stn || t.next || t.exitEnd || t.tail) continue;
+      if (t.names[n - 1] !== stn || t.next || t.exitEnd || t.tail || (t.uset && t.uset.fin)) continue;
       const ta = t.A[t.A.length - 1];
       for (const sd of sds) {
         if (!isFreeAt(sd.e, ta + 45, ta + 110, t)) continue;
@@ -1700,10 +1808,10 @@ function ttPlanner(useSiding) {
   };
   function relink() {
     const byStn = new Map();
-    for (const d of planned) { if (!d.route || d.unit || d.cut || d.prev || d.exitStart) continue; const k = d.names[0]; if (!byStn.has(k)) byStn.set(k, []); byStn.get(k).push(d); }
+    for (const d of planned) { if (!d.route || d.unit || d.cut || d.prev || d.exitStart || (d.uset && d.uset.begin)) continue; const k = d.names[0]; if (!byStn.has(k)) byStn.set(k, []); byStn.get(k).push(d); }
     const ar = planned.filter(t => t.route && !t.unit && !t.cut && !t.next && !t.exitEnd).sort((x, y) => x.end - y.end);
     const pass = opsOnly => { for (const a of ar) {
-      if (a.next || a.userCut) continue;
+      if (a.next || a.userCut || (a.uset && a.uset.fin)) continue;
       const ds = byStn.get(a.names[a.names.length - 1]); if (!ds) continue; const e = lastE(a), sd = a.tail;
       const cand = ds.filter(d => !d.prev && !d.userCutP && (!opsOnly || d === a.opsNext) && d.start >= a.end - 5 && d.ev[0].dep * 60 - a.end < 7200 && (d.cars || 0) === carsEnd(a)).sort((x, y) => x.start - y.start);
       for (const d of cand) {
@@ -1735,19 +1843,83 @@ function ttPlanner(useSiding) {
       for (let k = 0; k < n; k++) { if (Math.abs(d - D[k]) <= 1) return [A[k], P[k]]; if (k + 1 < n && d < D[k + 1]) { const x = P[k] + (A[k + 1] - P[k]) * (d - D[k]) / Math.max(1, D[k + 1] - D[k]); return [x, x]; } }
       return [P[n - 1], o.end];
     }
+    const who = (e, a, b, x) => { const o = []; for (const r of res.get(e) || []) if (r[0] < b && a < r[1] && r[2] && r[2] !== x && !o.includes(r[2])) o.push(r[2]);
+      for (const q of planned) if (q !== x && !o.includes(q) && q.route && q.A && q.start < b && a < q.end && q.route.segs.some(g => { if (g.e !== e) return false; const u = [tAt(q, g.d0), tAt(q, g.d1)]; return Math.min(u[0][0], u[1][0]) - 30 < b && a < Math.max(u[0][1], u[1][1]) + 30; })) o.push(q); return o; };
     for (const d of planned) {
-      if (!d.route || d.unit || d.cut || d.prev || d.exitStart || d.start > STAY_AM) continue;
-      const e = d.route.segs[0].e; if (busy(e, STAY0, d.start, d)) continue;
+      if (!d.route || d.unit || d.cut || d.prev || d.exitStart || d.vStart || (d.start > STAY_AM && !d.wantStay) || (d.uset && d.uset.begin && !d.wantStay)) continue;
+      const e = d.route.segs[0].e; if (busy(e, STAY0, d.start, d)) { if (!d.wantStay) continue; uConf(d, 'plat', d.names[0], e, STAY0, d.start, who(e, STAY0, d.start, d), `夜間留置: この番線を朝 ${ttSHMS(d.start)} までにほかの列車も使います`); }
+      if (d.wantStay) d.vStart = 'plat';
       reserve(e, STAY0, d.start, d); d.A[0] = STAY0; d.start = STAY0; d.stay = true; stat.stayAM = (stat.stayAM || 0) + 1;
     }
     for (const a of planned) {
-      if (!a.route || a.unit || a.cut || a.next || a.exitEnd || a.end < STAY_PM) continue;
-      const e = a.route.segs[a.route.segs.length - 1].e; if (busy(e, a.end, STAY1, a)) continue;
+      if (!a.route || a.unit || a.cut || a.next || a.exitEnd || a.vEnd || (a.end < STAY_PM && !a.wantStay) || (a.uset && a.uset.fin && !a.wantStay)) continue;
+      const e = a.route.segs[a.route.segs.length - 1].e; if (busy(e, a.end, STAY1, a)) { if (!a.wantStay) continue; uConf(a, 'plat', a.names[a.names.length - 1], e, a.end, STAY1, who(e, a.end, STAY1, a), `夜間留置: この番線を ${ttSHMS(a.end)} のあとほかの列車も使います`); }
+      if (a.wantStay) a.vEnd = 'plat';
       reserve(e, a.end, STAY1, a); a.P[a.P.length - 1] = STAY1; a.end = STAY1; a.stay = true; stat.stayPM = (stat.stayPM || 0) + 1;
     }
   }
-  const finish = () => { cplList.splice(0).forEach(addUnit); detach(); deadhead(); relink(); stay(); return units; };
-  return { pre, plan, stat, units, finish };
+  // 運用の編集で決めた1日の始まり・終わり: 留置線・車庫線から出庫/へ入庫(夜通しそこにいる)、ホームで夜間留置(stay で朝・夜まで延ばす)
+  function userEnds() {
+    for (const t of planned) {
+      const f = t.uset && t.uset.fin; if (!f || t.next || t.exitEnd || t.unit || t.cut) continue;
+      const st = t.names[t.names.length - 1];
+      if (f.mode === 'plat') { t.wantStay = true; continue; }
+      if (f.mode === 'depot') {   // 検車区へ入庫: 引上線(指定が無ければ空いている線)を通って入り、そこで1日を終える(引上線は1分だけ使う)
+        const ta = t.A[t.A.length - 1]; let lv = ttHMS(f.lv); if (lv == null || lv < ta + 20) lv = ta + 40;
+        const sds = f.sd != null && f.sd !== '' ? [sdOf(st, f.sd)].filter(Boolean) : (SIDINGS.get(st) || []).slice().sort((x, y) => (isFreeAt(x.e, lv, lv + 120, t) ? 0 : 1) - (isFreeAt(y.e, lv, lv + 120, t) ? 0 : 1));
+        let ok = false;
+        for (const sd of sds) { const r = buildTimedRoute(t.names, t.long, Object.assign({}, optOf(t), { tail: sd, after: null, isFree: (i, e) => e === t.route.stopE[i] }));
+          if (!r || r.stopD.length !== t.route.stopD.length + 1 || t.names.some((_, i) => r.stopE[i] !== t.route.stopE[i])) continue;
+          const out = r.stopD[r.stopD.length - 1] - r.stopD[r.stopD.length - 2], tOut = Math.max(15, Math.min(45, out / 2.5));
+          { const by = whoAt(sd.e, lv, lv + tOut + 60, t); if (by.length) uConf(t, 'sd', st, sd.e, lv, lv + tOut + 60, by, `入庫: ${ttSHMS(lv)} に通る線(引上線)をほかの列車も使います`); }
+          t.route = r; t.sd = undefined; t.tail = sd; t.deadOut = 'user';
+          t.P[t.P.length - 1] = lv; t.A.push(lv + tOut); t.P.push(lv + tOut + 60); t.end = lv + tOut + 60; reserve(sd.e, lv, t.end, t); ok = true; break; }
+        if (!ok) { t.P[t.P.length - 1] = Math.max(t.P[t.P.length - 1], lv); t.end = t.P[t.P.length - 1]; if (sds.length) uErr(t, '入庫: 引上線へ入れないので、ホームから入庫したとみなしました'); }
+        t.vEnd = 'depot'; stat.userIn = (stat.userIn || 0) + 1; continue;
+      }
+      if (f.mode !== 'sd') continue;
+      const sd = sdOf(st, f.sd); if (!sd) { uErr(t, `${st}に指定の留置線・車庫線がありません`); continue; }
+      const ta = t.A[t.A.length - 1]; let lv = ttHMS(f.lv); if (lv == null) lv = ta + 40;
+      if (lv < ta + 20) { uErr(t, `入庫: ホームを出る時刻 ${ttSHMS(lv)} が着いた時刻より早すぎます`); lv = ta + 40; }
+      const r = buildTimedRoute(t.names, t.long, Object.assign({}, optOf(t), { tail: sd, after: null, isFree: (i, e) => e === t.route.stopE[i] }));
+      if (!r || r.stopD.length !== t.route.stopD.length + 1 || t.names.some((_, i) => r.stopE[i] !== t.route.stopE[i])) { uErr(t, `入庫: 着いた番線から${sd.label || '留置線'}へ入れません`); continue; }
+      const out = r.stopD[r.stopD.length - 1] - r.stopD[r.stopD.length - 2], tOut = Math.max(15, Math.min(45, out / 2.5));
+      { const by = whoAt(sd.e, lv, STAY1, t); if (by.length) uConf(t, 'sd', st, sd.e, lv, STAY1, by, `入庫: ${sd.label || '留置線'}を ${ttSHMS(lv)} のあとほかの列車も使います`); }
+      t.route = r; t.sd = undefined; t.tail = sd; t.deadOut = 'user'; t.vEnd = 'sd';
+      t.P[t.P.length - 1] = lv; t.A.push(lv + tOut); t.P.push(STAY1); t.end = STAY1; t.stay = true;
+      reserve(sd.e, lv, STAY1, t); stat.userIn = (stat.userIn || 0) + 1;
+    }
+    for (const d of planned) {
+      const b = d.uset && d.uset.begin; if (!b || d.prev || d.exitStart || d.unit || d.cut) continue;
+      const st = d.names[0];
+      if (b.mode === 'plat') { d.wantStay = true; continue; }
+      if (b.mode === 'depot') {   // 検車区から出庫: 引上線(指定が無ければ入れる線)を通ってホームへ
+        const dep0 = d.ev[0].dep * 60; let a1 = ttHMS(b.back); if (a1 == null || a1 > dep0 - 10) a1 = dep0 - 110;
+        const sds = d.fromSiding || d.k0 !== 0 ? [] : b.sd != null && b.sd !== '' ? [sdOf(st, b.sd)].filter(Boolean) : (SIDINGS.get(st) || []).slice().sort((x, y) => (isFreeAt(x.e, a1 - 150, a1, d) ? 0 : 1) - (isFreeAt(y.e, a1 - 150, a1, d) ? 0 : 1));
+        let ok = false;
+        for (const sd of sds) { if (!enterFrom(d, sd, a1 - 150, a1)) continue; const by = whoAt(sd.e, a1 - 150, a1, d); if (by.length) uConf(d, 'sd', st, sd.e, a1 - 150, a1, by, `出庫: ${ttSHMS(a1)} 前に通る線(引上線)をほかの列車も使います`); reserve(sd.e, a1 - 150, a1, d); d.deadIn = 'user'; ok = true; break; }
+        if (!ok && sds.length) uErr(d, '出庫: 引上線から入れないので、ホームから出庫したとみなしました');
+        d.vStart = 'depot'; stat.userOut = (stat.userOut || 0) + 1; continue;
+      }
+      if (b.mode !== 'sd') continue;
+      if (d.fromSiding || d.k0 !== 0) { uErr(d, '出庫: すでに引上線から出る形になっています'); continue; }
+      const sd = sdOf(st, b.sd); if (!sd) { uErr(d, `${st}に指定の留置線・車庫線がありません`); continue; }
+      const dep0 = d.ev[0].dep * 60; let a1 = ttHMS(b.back); if (a1 == null) a1 = dep0 - 110;
+      if (a1 > dep0 - 10) { uErr(d, `出庫: ホームに着く時刻 ${ttSHMS(a1)} が発車に近すぎます`); a1 = dep0 - 50; }
+      if (!enterFrom(d, sd, STAY0, a1)) { uErr(d, `出庫: ${sd.label || '留置線'}から発車する番線へ入れません(番線を変えるか、別の線を選んでください)`); continue; }
+      { const by = whoAt(sd.e, STAY0, a1, d); if (by.length) uConf(d, 'sd', st, sd.e, STAY0, a1, by, `出庫: ${sd.label || '留置線'}を朝 ${ttSHMS(a1)} までにほかの列車も使います`); }
+      d.stay = true; d.vStart = 'sd'; d.deadIn = 'user'; reserve(sd.e, STAY0, a1, d); stat.userOut = (stat.userOut || 0) + 1;
+    }
+  }
+  // 全部決まってから、指定の番線をほかの列車と取り合っていないか見る(あとから計画した列車も含めて)
+  function checkForced() {
+    for (const t of planned) { const f = forceOf(t); if (!f || !t.route) continue;
+      for (const k in f) { const i = +k, e = t.route.stopE[i]; if (e !== f[k]) continue;
+        const sp = span(t, i), by = whoAt(e, sp[0], sp[1], t);
+        if (by.length) uConf(t, 'plat', t.names[i], e, sp[0], sp[1], by, `${t.names[i]}の指定の番線を ${ttSHMS(sp[0])}〜${ttSHMS(sp[1])} にほかの列車も使います`); } }
+  }
+  const finish = () => { cplList.splice(0).forEach(addUnit); userEnds(); detach(); deadhead(); relink(); stay(); checkForced(); return units; };
+  return { pre, plan, stat, units, finish, res };
 }
 
 // 区間ごとに種別が変わる列車(京成線内は快速・浅草線内は普通・京急線内は特急、など)の、時刻 T での種別

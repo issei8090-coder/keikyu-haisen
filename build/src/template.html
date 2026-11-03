@@ -169,6 +169,26 @@
   #ttlist b { white-space:nowrap; color:var(--ink); }
   #ttlist .rn { color:var(--sub); font:11px var(--font-num); white-space:nowrap; }
   #ttlist small { color:var(--sub); margin-left:auto; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11.5em; text-align:right; }
+  #occ { position:fixed; left:12px; right:12px; bottom:12px; max-height:48vh; z-index:30; display:flex; flex-direction:column; background:var(--elev); border:1px solid var(--line-2); border-radius:var(--r); box-shadow:0 10px 32px rgba(0,0,0,.35); }
+  #occ[hidden] { display:none; }
+  .occbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); }
+  .occbar #occinfo { flex:1; min-width:160px; margin:0; }
+  .occbar select { width:auto; flex:0 0 auto; min-width:0; } .occbar #occst { max-width:240px; } .occbar button { min-height:28px; padding:3px 10px; }
+  #occbody { overflow:auto; padding:4px 10px 4px; min-height:60px; }
+  #occbody svg { display:block; font-family:var(--font-num); font-size:11px; }
+  .occhint { margin:0; padding:2px 10px 8px; }
+  .occ-rb { fill:transparent; } .occ-row:hover .occ-rb { fill:var(--surface-2); }
+  .occ-l { fill:var(--ink-2); } .occ-l.sd { fill:var(--sub); font-style:italic; }
+  .occ-g { stroke:var(--line); stroke-width:1; } .occ-g.h { stroke:var(--line-2); }
+  .occ-tx { fill:var(--sub); }
+  .occ-b rect { fill:var(--accent-soft); stroke:var(--accent); stroke-width:1; cursor:pointer; }
+  .occ-b.stay rect { fill:var(--surface-3); stroke:var(--line-2); }
+  .occ-b.dh rect { fill:var(--surface-3); stroke:var(--sub); stroke-dasharray:3 2; }
+  .occ-b.ov rect { fill:var(--bad-soft); stroke:var(--bad); }
+  .occ-b.sel rect { stroke:var(--warn); stroke-width:2.5; }
+  .occ-b:hover rect { stroke-width:2; }
+  .occ-b text { fill:var(--ink); pointer-events:none; }
+  .occ-now { stroke:var(--warn); stroke-width:1.5; }
   .opsl { list-style:none; margin:8px 0; padding:0; max-height:300px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-s); }
   .opsl li { display:flex; flex-wrap:wrap; align-items:center; gap:2px 6px; padding:4px 6px; font-size:12px; border-bottom:1px solid var(--line); cursor:pointer; }
   .opsl li:hover { background:var(--surface-2); }
@@ -191,6 +211,25 @@
   .opse li { display:flex; align-items:center; gap:6px; font-size:12px; padding:3px 0; border-bottom:1px solid var(--line); }
   .opse li span { flex:1; }
   .opswarn { color:var(--warn); font-size:12px; margin:4px 0; }
+  .opshl { fill:none; stroke:#ff3df0; stroke-width:4.5; stroke-linecap:round; opacity:.85; pointer-events:none; }
+  #opstrain { margin:6px 0 8px; border-top:1px solid var(--line); padding-top:6px; }
+  #opstrain summary { font-weight:700; font-size:12.5px; cursor:pointer; }
+  .opsch { list-style:none; margin:0; padding:0; max-height:260px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-s); font-size:12px; }
+  .opsch li { padding:3px 6px; border-bottom:1px solid var(--line); }
+  .opsch li[data-go] { cursor:pointer; } .opsch li[data-go]:hover { background:var(--surface-2); }
+  .opsch li.on { background:var(--accent-soft); outline:1px solid var(--accent); }
+  .opsch li.dh b { color:var(--sub); }
+  .opsch li small { display:block; color:var(--sub); padding-left:12px; }
+  .opsch li.ng { color:var(--bad); font-weight:700; } .opsch li.ok { color:var(--ok); }
+  .opsform1 { display:flex; flex-direction:column; gap:6px; } .opsform1 label { display:flex; flex-direction:column; gap:2px; font-size:11.5px; color:var(--sub); } .opsform1 select { min-height:30px; max-width:100%; }
+  .opsplat { display:flex; flex-direction:column; gap:3px; } .opsplat label { display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1.3fr); gap:2px 6px; align-items:center; font-size:12px; }
+  .opsplat label small.cur { grid-column:2; color:var(--sub); font-size:11px; } .opsplat select { min-height:26px; min-width:0; }
+  .opsprob { border:1px solid var(--warn); border-radius:var(--r-s); padding:4px 6px; margin:4px 0; }
+  .opsby { display:flex; flex-wrap:wrap; gap:4px; margin:3px 0; } .opsby span { display:inline-flex; gap:2px; } .opsby button { padding:1px 6px; min-height:22px; font-size:11px; }
+  .opsng { color:var(--bad); } .opsl li.fine { opacity:.62; } .opsl li.fine .ok { color:var(--ok); background:transparent; }
+  .opse i { font-style:normal; font-size:10.5px; color:var(--accent); border:1px solid var(--accent); border-radius:3px; padding:0 3px; }
+  .dhst { width:100%; border-collapse:collapse; font-size:11.5px; margin:6px 0; } .dhst td, .dhst th { padding:1px 2px; text-align:left; } .dhst th { color:var(--sub); font-weight:400; }
+  .dhst select, .dhst input { width:100%; min-width:0; box-sizing:border-box; font-size:11.5px; min-height:26px; } .dhst td:nth-child(1) { width:28%; } .dhst td:nth-child(3), .dhst td:nth-child(4) { width:17%; } .dhst button { padding:1px 5px; min-height:22px; }
   .opssel { display:flex; flex-wrap:wrap; gap:4px; margin:4px 0 6px; }
   #empty, .hint { color:var(--sub); font-size:12.5px; margin:0; line-height:1.7; }
 
@@ -393,6 +432,7 @@
       <div id="ttno"></div>
       <div id="ttlate"></div>
       <div id="ttlinkinfo"></div>
+      <div id="opstrain" hidden></div>
       <ol id="ttstops"></ol>
     </section>
     <section id="selbox" hidden>
@@ -416,28 +456,20 @@
       <p id="cloudmsg" class="hint"></p>
       <p id="opsstat" class="hint"></p>
       <label class="row"><span>駅</span><select id="opsst"></select></label>
+      <div class="btns"><button id="occopen" title="駅の線ごとに、どの列車がいつ使っているかを帯で出します">番線使用図</button></div>
       <ul id="opsvan" class="opsl"></ul>
       <div class="btns"><button id="opslink" class="primary" disabled>消える1本と現れる1本を選んでつなぐ</button></div>
-      <h3 class="opsh">回送を追加</h3>
-      <div class="opsform">
-        <label>列車番号<input id="dhno" placeholder="回607C"></label>
-        <label>両数<select id="dhcars"><option>4</option><option>6</option><option selected>8</option><option>12</option></select></label>
-        <label>発駅<select id="dhfrom"></select></label>
-        <label>発<input id="dhdep" placeholder="10:15"></label>
-        <label>着駅<select id="dhto"></select></label>
-        <label>着<input id="dharr" placeholder="10:40"></label>
-        <label>前の列車<input id="dhprev" placeholder="(発駅に着く列車)"></label>
-        <label>次の列車<input id="dhnext" placeholder="(着駅から出る列車)"></label>
-      </div>
-      <div class="btns"><button id="dhadd">回送を追加</button></div>
-      <p id="dhmsg" class="hint"></p>
+      <div class="btns"><button id="opsprop">この駅の案を作る</button><button id="opspropall">全駅の案を作る</button><button id="opspropdel">案を消す</button></div>
+      <p id="opspmsg" class="hint"></p>
+      <h3 class="opsh">回送(駅・通過/停車・時刻・番線)</h3>
+      <div id="dhed"></div>
       <h3 class="opsh">編集の一覧</h3>
       <ul id="opsedits" class="opse"></ul>
       <div id="opsmsg"></div>
       <div class="btns"><button id="opsapply" class="primary">反映(計算し直す)</button></div>
       <div class="btns"><button id="opsexp">書き出す</button><button id="opsimp">読み込む</button><button id="opsclr" class="danger">ブラウザの編集を消す</button></div>
       <input id="opsfile" type="file" accept=".json,application/json" hidden>
-      <p class="hint">駅を選ぶと、その駅で消える列車(消)と現れる列車(現)が時刻順に出ます。消と現を1本ずつ押して「つなぐ」。「回送」で、その列車につながる回送の入力欄が埋まります。地図で列車を選ぶと、詳細につながりを切る・回送を直すボタンが出ます。編集はこのブラウザに保存されます。いつも効くようにするには「書き出す」で ops_user.json を保存して渡してください。</p>
+      <p class="hint">時刻表の時刻は変えません。駅を選ぶと、その駅で消える列車(消)・現れる列車(現)と、夜間留置・入出庫で片づいた列車(終・始)が時刻順に出ます。消と現を1本ずつ押して「つなぐ」、または「開く」でその列車の運用の設定(前・次の運用、番線、折り返しの引上線と時刻、1日の始まり・終わり、通過待ち)を開きます。「案を作る」は、同じ駅の同じ所属の列車を着いた順につなぎ、残りを入出庫・夜間留置にする下書きです。ぶつかった編集には原因の列車が出るので、その列車を開くか空いている番線へ移します。</p>
     </details>
     <details class="card" id="addcard" open>
       <summary>列車を投入(手動)</summary>
@@ -456,6 +488,7 @@
     </details>
   </aside>
 </main>
+<div id="occ" hidden><div class="occbar"><b>番線使用図</b><select id="occst" aria-label="駅"></select><button id="occstn" title="選んでいる列車の次の停車駅へ">列車の次の駅</button><button id="occprev" aria-label="前の時間">◀</button><select id="occw" aria-label="表示する幅"><option value="3600">1時間</option><option value="7200">2時間</option><option value="14400">4時間</option><option value="79200">終日</option></select><button id="occnext" aria-label="後の時間">▶</button><button id="occnow">今の時刻</button><span id="occinfo" class="hint"></span><button id="occclose">閉じる</button></div><div id="occbody"></div><p class="hint occhint">帯 = その線を押さえている時間(停車・折り返し・留置)。赤 = 同じ線を同時に使っている(縦列やぶつかり)、点線 = 回送、黄色の枠 = 選んでいる列車。帯を押すとその列車の運用の設定を開きます。</p></div>
 <script>
 const D = /*DATA*/;
 /*CORE*/

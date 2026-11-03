@@ -4,6 +4,7 @@ const USER_OPS_FILE = /*OPSUSER*/null;   // 運用の編集(build/ops_user.json)
 let USER_OPS = null;   // ↑とブラウザの保存を合わせたもの(opsui.js)
 /*TTCORE*/
 const gTT = el('g', {}, null); svg.insertBefore(gTT, gTrains);
+let ttRes = null;   // 計画で押さえた線の時間帯(運用の編集で、空いている番線を探すのに使う)
 let ttToken = 0, ttDay = '', ttClock = 7 * 3600, ttRate = 30, ttList = [], ttSel = null, ttDrag = false;
 const hm = m => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
 function ttKill(t) { if (t.g) { t.g.remove(); t.g = null; } if (ttSel === t) ttSelect(null); }
@@ -36,7 +37,7 @@ function ttLoad2(day, token, nl, ot) {
     while (pre < list.length && performance.now() - t0 < 30) pl.pre(list[pre++]);
     while (pre >= list.length && idx < list.length && performance.now() - t0 < 30) pl.plan(list[idx++]);
     if (idx < list.length) { $('ttinfo').textContent = `経路を計算中… ${Math.round((pre + idx) / list.length * 50)}%`; setTimeout(work, 0); }
-    else { list.push(...pl.finish()); D_DAY = ttDay; dispPlan(list); dispReady = true; if (typeof opsRefresh === 'function') opsRefresh(); $('ttinfo').textContent = (pl.units.length ? `金沢文庫の増結 ${pl.units.length} 本・` : '') + (nl ? `折り返し ${nl} 件(うち引上線 ${pl.stat.siding} 件)・縦列停車 ${pl.stat.tandem || 0} 件` + (ot ? `・通過待ちを推定 ${ot.waits} 件` : '') : ''); }
+    else { list.push(...pl.finish()); ttRes = pl.res; D_DAY = ttDay; dispPlan(list); dispReady = true; if (typeof opsRefresh === 'function') opsRefresh(); $('ttinfo').textContent = (pl.units.length ? `金沢文庫の増結 ${pl.units.length} 本・` : '') + (nl ? `折り返し ${nl} 件(うち引上線 ${pl.stat.siding} 件)・縦列停車 ${pl.stat.tandem || 0} 件` + (ot ? `・通過待ちを推定 ${ot.waits} 件` : '') : ''); }
   };
   if (day) work(); else $('ttinfo').textContent = '時刻表運転はOFFです';
   if (!day) $('ttcount').textContent = '';
@@ -154,6 +155,7 @@ function ttUpdate() {
 function ttSelect(t) {
   if (ttSel && ttSel.g) ttSel.g.classList.remove('sel');
   ttSel = t; $('ttbox').hidden = !t;
+  if (typeof opsTrainPanel === 'function') opsTrainPanel(t && !t.unit && !t.cut ? t : null);
   if (!t) { routeHL.setAttribute('d', ''); return; }
   if (selected) select(null);
   ttSel = t; $('ttbox').hidden = false;
@@ -179,7 +181,7 @@ function ttSelect(t) {
   $('ttno').textContent = (t.no ? '列車番号 ' + t.no + '　運行番号 ' + ttRun(t).num + '(' + ttRun(t).co + '車)' + (ttRun(t).duty && ttRun(t).duty !== ttRun(t).num ? ' ' + ttRun(t).duty : '') + '　' : '') + `${t.names[0]} ${hm(t.ev[0].dep)} → ${t.names[t.names.length - 1]} ${hm(t.ev[t.ev.length - 1].arr)}`;
   const lk = (lab, o) => o ? `${lab}: ${TYPES[o.type].name} ${o.names[0]} ${hm(o.ev[0].dep)} → ${o.names[o.names.length - 1]} ${hm(o.ev[o.ev.length - 1].arr)}${o.no ? ' (' + o.no + ')' : ''}` : '';
   const sw = t.swapOut ? `${t.names[t.names.length - 1]}で車両交換: この${t.cars}両は回送で出ていき、${t.swapOut.cars}両の別の車両が ${t.swapOut.no} になる(推定)` : t.swapIn ? `${t.names[0]}で車両交換: ${t.swapIn.no}(${t.swapIn.cars}両)に代わって、回送で入ってきた${t.cars}両(推定)` : '';
-  $('ttlinkinfo').innerHTML = (typeof opsSelBtns === 'function' ? opsSelBtns(t) : '') + [lk('前の運用', t.prev), lk('折り返し後', t.next), sw].filter(Boolean).join('<br>') + (t.off && t.off.some(Boolean) ? '<br>縦列停車あり' : '') + (t.tail ? (t.deadOut ? '<br>到着後、引上線へ(このあと回送・推定)' : '<br>到着後、引上線へ') : '') + (t.formed ? `<br>品川で切り離された4両×${t.formed.length}本で組成(推定): ${t.formed.map(m => m.no).join('・')} の前4両` : '') + (t.tseg ? '<br>種別: ' + t.tseg.map(([i, y], n) => (n ? t.names[i] + 'から' : '') + TYPES[y].name).join(' → ') : '') + (t.added4 ? '<br>品川で4両を足して12両に(推定)' : '') + (t.deadIn === 'exit' ? '<br>泉岳寺方から回送で入線(推定)' : '') + (t.deadOut === 'exit' ? '<br>到着後、泉岳寺方へ回送(推定)' : '') + (t.fromSiding ? (t.deadIn ? '<br>引上線から入線(回送で到着・推定)' : '<br>引上線から入線') : '') + (t.cpl ? `<br>8両編成 → 金沢文庫で4両増結(${t.cpl.side === 'rear' ? '3番線・後ろ=金沢八景寄り' : '4番線・前=上大岡寄り'})して12両` + (t.cpl.t1 < Infinity ? '、品川で前4両を切り離し' : '') : t.cars ? `<br>${t.cars}両編成` + (t.cars === 12 && t.names.indexOf('金沢文庫') > 0 && t.names.indexOf('金沢文庫') < t.names.length - 1 ? '(金沢文庫で後ろ4両を切り離し)' : '') : '');
+  $('ttlinkinfo').innerHTML = [lk('前の運用', t.prev), lk('折り返し後', t.next), sw].filter(Boolean).join('<br>') + (t.off && t.off.some(Boolean) ? '<br>縦列停車あり' : '') + (t.tail ? (t.deadOut ? '<br>到着後、引上線へ(このあと回送・推定)' : '<br>到着後、引上線へ') : '') + (t.formed ? `<br>品川で切り離された4両×${t.formed.length}本で組成(推定): ${t.formed.map(m => m.no).join('・')} の前4両` : '') + (t.tseg ? '<br>種別: ' + t.tseg.map(([i, y], n) => (n ? t.names[i] + 'から' : '') + TYPES[y].name).join(' → ') : '') + (t.added4 ? '<br>品川で4両を足して12両に(推定)' : '') + (t.deadIn === 'exit' ? '<br>泉岳寺方から回送で入線(推定)' : '') + (t.deadOut === 'exit' ? '<br>到着後、泉岳寺方へ回送(推定)' : '') + (t.fromSiding ? (t.deadIn ? '<br>引上線から入線(回送で到着・推定)' : '<br>引上線から入線') : '') + (t.cpl ? `<br>8両編成 → 金沢文庫で4両増結(${t.cpl.side === 'rear' ? '3番線・後ろ=金沢八景寄り' : '4番線・前=上大岡寄り'})して12両` + (t.cpl.t1 < Infinity ? '、品川で前4両を切り離し' : '') : t.cars ? `<br>${t.cars}両編成` + (t.cars === 12 && t.names.indexOf('金沢文庫') > 0 && t.names.indexOf('金沢文庫') < t.names.length - 1 ? '(金沢文庫で後ろ4両を切り離し)' : '') : '');
   $('ttstops').innerHTML = t.ev.filter(e => !e.thru).map(e => e.wait ? `<li class="w"><span>${hm(e.arr)}頃</span>${e.name}(通過待ち・推定)</li>` : `<li><span>${e.arr !== e.dep ? hm(e.arr) + '着 ' : ''}${hm(e.dep)}</span>${e.name}${e.ot ? '(待避)' : ''}${t.cpl && t.ev[t.cpl.i] === e ? '(4両増結)' : ''}</li>`).join('');
 }
 function ttFrame(real) {

@@ -318,6 +318,8 @@ function buildTimedRoute(names, longDwell, opt) {
 }
 function buildTimedRoute_(names, longDwell, opt) {
   let maps = names.map(n => stByName.get(n).stopMap);
+  // 運用の編集で番線を指定した駅(opt.force = {駅の添字: 線}): その線だけにする。指定の線がその駅のホームに無ければ無視
+  if (opt.force) maps = maps.map((m, i) => { const e = opt.force[i]; if (e == null || !m.has(+e)) return m; const f = new Map([[+e, m.get(+e)]]); f.name = m.name; f.forced = true; return f; });
   // 番線の使い方が決まっている駅(品川など): 入ってはいけない番線を最初から外す
   if (opt.allow) maps = maps.map((m, i) => { const f = new Map([...m].filter(([e]) => opt.allow(i, e))); f.name = m.name; return f.size && f.size < m.size ? f : m; });
   const afterMap = opt.after && !opt.exitEnd && !opt.tail ? stByName.get(opt.after).stopMap : null;
