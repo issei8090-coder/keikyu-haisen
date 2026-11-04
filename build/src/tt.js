@@ -46,14 +46,14 @@ let ttLastT = NaN;
 const ttRun = t => ttRunOf(t);   // 運行番号と所属(ttcore.js)
 // 列車のラベル: 「種別 行先」と「運行番号 所属」を数秒ごとに交互に表示する
 function ttLabelText(t) {
-  if (t.cut) return '切離4両'; if (t.unit) return '増結4両';
+  if (t.cut) return '切離4両'; if (t.unit) return '増結4両'; if (t.yard) return '車庫';
   const ty = TYPES[t.shown || t.type], alt = $('ttrunno') && $('ttrunno').checked && Math.floor(Date.now() / 3000) % 2 === 1, r = alt ? ttRun(t) : null;
   return r && r.num ? `${r.num} ${r.co}車` : `${ty.short} ${shortDest(t.dest)}`;
 }
 // ===== 在線列車の一覧(時刻表で走っている列車すべて) =====
 let ttActive = [];
 function ttWhere(t) {   // いまどこにいるか
-  const T = ttClock, n = t.names.length; if (t.unit || t.cut) return t.cut ? '品川' : '金沢文庫';
+  const T = ttClock, n = t.names.length; if (t.yard) return t.yardSt + ' ' + t.yardTr; if (t.unit || t.cut) return t.cut ? '品川' : '金沢文庫';
   let k = -1; for (let i = 0; i < n; i++) if (t.A[i + t.k0] <= T) k = i;
   if (k < 0) return t.names[0] + ' 入線';
   const stopAt = i => !t.ev[i].thru;
@@ -71,11 +71,11 @@ function ttListRender() {
     ul.dataset.key = key; ul.innerHTML = '';
     act.slice().sort((a, b) => (ttRun(a).co + ttRun(a).num).localeCompare(ttRun(b).co + ttRun(b).num, 'ja')).forEach(t => {
       const li = document.createElement('li'), r = ttRun(t);
-      li.innerHTML = `<span class="dot"></span><b></b><span class="rn">${t.unit || t.cut ? '' : r.num + ' ' + r.co}</span><small></small>`;
+      li.innerHTML = `<span class="dot"></span><b></b><span class="rn">${t.unit || t.cut || t.yard ? '' : r.num + ' ' + r.co}</span><small></small>`;
       li.onclick = () => { ttSelect(t); }; li.onmouseenter = ev => ttOpsShow(t, ev); li.onmousemove = ttOpsMove; li.onmouseleave = ttOpsHide;
       t.li2 = li; ul.appendChild(li); });
   }
-  for (const t of act) { const li = t.li2; if (!li) continue; const ty = TYPES[t.shown || t.type], s = (t.cut ? '切離4両' : t.unit ? '増結4両' : ty.name + ' ' + shortDest(t.dest));
+  for (const t of act) { const li = t.li2; if (!li) continue; const ty = TYPES[t.shown || t.type], s = (t.cut ? '切離4両' : t.unit ? '増結4両' : t.yard ? '車庫 ' + t.yardTr : ty.name + ' ' + shortDest(t.dest));
     if (li._s !== s) { li._s = s; li.children[1].textContent = s; li.children[0].style.background = ty.color; }
     const w = ttWhere(t); if (li._w !== w) { li._w = w; li.children[3].textContent = w; }
     li.classList.toggle('sel', t === ttSel); }
@@ -86,8 +86,8 @@ function ttOpsShow(t, ev) {
   const box = $('ttops'); if (!box) return;
   if (t.unit || t.cut) { box.innerHTML = `<h3>${t.cut ? '品川で切り離した4両' : '金沢文庫の増結車(4両)'}</h3>`; box.hidden = false; ttOpsMove(ev); return; }
   const r = ttRun(t); let rows;
-  if (r.duty) rows = ttList.filter(x => !x.unit && !x.cut && ttRun(x).duty === r.duty).sort((a, b) => a.ev[0].dep - b.ev[0].dep);   // 実際の運用表にある列車: その運用の列車を1日ぶん
-  else if (r.key) rows = ttList.filter(x => !x.unit && !x.cut && ttRun(x).key === r.key).sort((a, b) => a.ev[0].dep - b.ev[0].dep);   // 同じ運行番号の列車を1日ぶん
+  if (r.duty) rows = ttList.filter(x => !x.unit && !x.cut && !x.yard && ttRun(x).duty === r.duty).sort((a, b) => a.ev[0].dep - b.ev[0].dep);   // 実際の運用表にある列車: その運用の列車を1日ぶん
+  else if (r.key) rows = ttList.filter(x => !x.unit && !x.cut && !x.yard && ttRun(x).key === r.key).sort((a, b) => a.ev[0].dep - b.ev[0].dep);   // 同じ運行番号の列車を1日ぶん
   else { let f = t, guard = 0; while (f.prev && guard++ < 200) f = f.prev; rows = []; for (let x = f, g = 0; x && g < 200; x = x.next, g++) rows.push(x); }   // 号数で走る列車(スカイライナーなど)は折り返しのつながりで
   const end = x => x.names[x.names.length - 1];
   // 終着時の両数: 金沢文庫で増結した列車は12両。ただし前に付けた4両は品川で切り離すので、品川より先まで行く列車は元の両数
@@ -135,14 +135,14 @@ function ttUpdate() {
     const tk = ttTypeAt(t, T);
     if (!t.g) {
       const ty = TYPES[tk]; t.shown = tk;
-      t.g = el('g', { class: 'train' }, gTT);
+      t.g = el('g', { class: t.yard ? 'train yardu' : 'train' }, gTT);
       t.casing = el('path', { class: 'casing' }, t.g); t.body = el('path', { class: 'body', stroke: ty.color }, t.g);
-      t.label = el('text', { class: 'tlabel', fill: ty.color }, t.g, t.cut ? '切離4両' : t.unit ? '増結4両' : `${ty.short} ${shortDest(t.dest)}`);
+      t.label = el('text', { class: 'tlabel', fill: ty.color }, t.g, t.cut ? '切離4両' : t.unit ? '増結4両' : t.yard ? '車庫' : `${ty.short} ${shortDest(t.dest)}`);
       t.lbl = null;
       t.g.addEventListener('click', ev => { ev.stopPropagation(); ttSelect(t); });
       t.g.addEventListener('mouseenter', ev => ttOpsShow(t, ev)); t.g.addEventListener('mousemove', ttOpsMove); t.g.addEventListener('mouseleave', ttOpsHide);
     }
-    if (t.shown !== tk && !t.unit) {   // 種別が切り替わる駅に着いたら、色と表示を変える
+    if (t.shown !== tk && !t.unit && !t.yard) {   // 種別が切り替わる駅に着いたら、色と表示を変える
       const ty = TYPES[tk]; t.shown = tk;
       t.body.setAttribute('stroke', ty.color); t.label.setAttribute('fill', ty.color); t.lbl = null;
       if (ttSel === t) ttSelect(t);
@@ -155,7 +155,7 @@ function ttUpdate() {
 function ttSelect(t) {
   if (ttSel && ttSel.g) ttSel.g.classList.remove('sel');
   ttSel = t; $('ttbox').hidden = !t;
-  if (typeof opsTrainPanel === 'function') opsTrainPanel(t && !t.unit && !t.cut ? t : null);
+  if (typeof opsTrainPanel === 'function') opsTrainPanel(t && !t.unit && !t.cut && !t.yard ? t : null);
   if (!t) { routeHL.setAttribute('d', ''); return; }
   if (selected) select(null);
   ttSel = t; $('ttbox').hidden = false;
@@ -167,6 +167,14 @@ function ttSelect(t) {
     $('ttno').textContent = `${ty.name} ${m.dest}行き${m.no ? ' (' + m.no + ')' : ''} の前4両。品川 ${hm(m.ev[m.names.indexOf('品川')].arr)}着`;
     $('ttlinkinfo').innerHTML = d ? `引上線で待ち、品川 ${hm(d.ev[0].dep)}発 ${TYPES[d.type].name} ${d.dest}行き${d.no ? ' (' + d.no + ')' : ''}(${d.cars}両)の車両になる(推定)` : '引上線へ(このあとは回送扱い)';
     $('ttstops').innerHTML = `<li><span>${hm(Math.floor(t.A[0] / 60))}</span>品川で切り離し → 引上線へ</li>`;
+    return;
+  }
+  if (t.yard) {   // 検車区の車庫の線にいる車両(1日の始まりから出庫まで / 入庫から1日の終わりまで)
+    const o = t.yard === 'out' ? t.next : t.prev, oty = o ? TYPES[o.type] : ty, hm2 = x => hm(Math.floor(x / 60));
+    $('tttitle').textContent = `${t.yardSt}の車庫 ${t.yardTr}`; $('tttitle').style.color = oty.color;
+    $('ttno').textContent = t.yard === 'out' ? `${t.yardMid ? hm2(t.A[0]) + ' 昼の留置から' : '1日の始まりから留置'} → ${hm2(t.P[0])} 出庫` : `${hm2(t.A[1])} 入庫 → ${t.yardMid ? hm2(t.P[1]) + ' まで昼の留置' : '1日の終わりまで留置'}`;
+    $('ttlinkinfo').innerHTML = o ? (t.yard === 'out' ? `出庫後: ${oty.name} ${o.dest}行き${o.no ? ' (' + o.no + ')' : ''} ${t.yardSt} ${hm(o.ev[0].dep)}発` : `入庫前: ${oty.name} ${o.names[0]}発${o.no ? ' (' + o.no + ')' : ''} ${t.yardSt} ${hm(o.ev[o.ev.length - 1].arr)}着`) + '<br>ホームの先の引上線で折り返して出入り' : '';
+    $('ttstops').innerHTML = t.yard === 'out' ? `<li><span>${hm2(t.P[0])}</span>車庫の線を出る</li><li><span>${hm2(t.A[1])}</span>引上線で折り返し</li>` : `<li><span>${hm2(t.A[0])}</span>引上線で折り返し</li><li><span>${hm2(t.A[1])}</span>車庫の線に入る</li>`;
     return;
   }
   if (t.unit) {   // 増結車

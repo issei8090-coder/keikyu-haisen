@@ -8,7 +8,7 @@ function opsLoadStore() { try { const s = localStorage.getItem('kq-opsuser'); if
 USER_OPS = opsLoadStore();
 const opsDayObj = () => { const d = ttDay || 'wd'; if (!USER_OPS[d]) USER_OPS[d] = {}; const o = USER_OPS[d]; for (const k of ['link', 'cut', 'dh', 'del']) if (!o[k]) o[k] = []; if (!o.train || Array.isArray(o.train)) o.train = {}; return o; };
 const opsEsc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-function opsSave() { USER_OPS.saved = Date.now(); try { localStorage.setItem('kq-opsuser', JSON.stringify(USER_OPS)); } catch (e) { } if (typeof cloudPush === 'function') cloudPush('ops', USER_OPS); opsDirty = true; opsRender(); if (ttSel) opsTrainPanel(ttSel); }
+function opsSave() { USER_OPS.saved = Date.now(); if (typeof ttGeoSig === 'function') USER_OPS.geo = ttGeoSig(); try { localStorage.setItem('kq-opsuser', JSON.stringify(USER_OPS)); } catch (e) { } if (typeof cloudPush === 'function') cloudPush('ops', USER_OPS); opsDirty = true; opsRender(); if (ttSel) opsTrainPanel(ttSel); }
 const opsTy = t => (TYPES[t.type] || { name: t.type }).name;
 const opsArr = t => t.ev[t.ev.length - 1].arr, opsDep = t => t.ev[0].dep;
 const opsLast = t => t.names[t.names.length - 1];
@@ -45,6 +45,13 @@ function opsEdit(t, fn) {
   opsSave();
 }
 const opsSetOf = t => t.user ? t.user : (opsDayObj().train[ttUKey(t)] || {});
+// 12両で止まる途中の駅(ttcore の splitStations と同じ決まり)・自動の切り離しの説明
+function opsSplitSts(t) { if (!t || !t.names || t.unit || t.cut) return []; const n = t.names.length, ci = t.names.indexOf('金沢文庫'), si = t.names.indexOf('品川'), sj = t.names.indexOf('泉岳寺'), L = [];
+  for (let q = 1; q < n - 1; q++) { if (t.ev[q].thru || (si >= 0 && sj >= 0 && (sj > si ? q > si : q < si))) continue; if (t.cpl && t.cpl.unit ? q > t.cpl.i : t.cars === 12 && (ci < 0 || q <= ci)) L.push(t.names[q]); } return L; }
+function opsSplitAuto(t) {
+  if (t.cpl && t.cpl.unit) { const v = ttList.find(u => u.cut && u.cplWith === t && !u.userSplit); if (v) return `品川で前4両を引上線へ${v.into ? ' → ' + v.into.no + 'の車両' : '(そのあと回送)'}`; return t.cpl.side === 'front' ? '品川で前4両を切り離し' : '終着まで12両'; }
+  const ci = t.names.indexOf('金沢文庫'); return ci > 0 && ci < t.names.length - 1 ? '金沢文庫で後ろ4両を切り離し(消える)' : '終着まで12両';
+}
 // ===== 運用のつなぎ(次・前) =====
 function opsNextCands(a) { const st = opsLast(a), ta = opsArr(a); return ttList.filter(d => opsReal(d) && d !== a && d.names[0] === st && !d.exitStart && opsDep(d) >= ta && opsDep(d) - ta <= 240).sort((x, y) => opsDep(x) - opsDep(y)).slice(0, 30); }
 function opsPrevCands(d) { const st = d.names[0], td = opsDep(d); return ttList.filter(a => opsReal(a) && a !== d && opsLast(a) === st && !a.exitEnd && opsArr(a) <= td && td - opsArr(a) <= 240).sort((x, y) => opsArr(y) - opsArr(x)).slice(0, 30); }
@@ -62,12 +69,72 @@ function opsLinkSet(a, d) {   // a のあと d につなぐ(d = null なら a �
 function opsPrevCut(d) { const a = d.prev; if (!a) return; const U = opsDayObj(), st = d.names[0]; U.link = U.link.filter(x => !(x.d === d.no && x.st === st)); if (d.user) d.user.prev = ''; else if (a.user) a.user.next = ''; else U.cut.push({ a: a.no, st, d: d.no }); opsSave(); }
 // ===== 車両の1日(つながりをたどる) =====
 function opsChain(t) { let h = t, n = 0; while (h.prev && n++ < 100) h = h.prev; const L = []; let x = h; n = 0; while (x && n++ < 150) { L.push(x); x = x.next; } return L; }
+// ===== 運用表: 車両の1日を、始まり → 列車 → 折り返し → … → 終わり の順に1枚で見せて、その場で直す =====
+// 列車の行は時刻表のまま(見るだけ)。直せるのは: 始まり(夜間留置・留置線・車庫・別の駅から回送)、折り返し(ホーム・引上線・時刻・番線・次の列車)、終わり
+let opsOpvDh = null;   // 「回送で来る・行く」を選んで、まだ回送を作っていない行(キー|begin/fin)
+const opsSdSel = (st, cur, withPlat) => `<option value="">自動</option>${withPlat ? `<option value="plat"${cur === 'plat' ? ' selected' : ''}>ホームで折り返す</option>` : ''}${opsSidings(st).map(sd => `<option value="sd:${sd.e}"${cur === 'sd:' + sd.e ? ' selected' : ''}>${opsEsc(sd.label)}で折り返す</option>`).join('')}`;
+function opsOpv(t, ch, b0, e1) {
+  const H = [], h = ch[0], z = ch[ch.length - 1], kh = opsEsc(ttUKey(h)), kz = opsEsc(ttUKey(z));
+  // 始まり
+  { const st = h.names[0], b = opsSetOf(h).begin || {}, cur = b.mode === 'sd' ? 'sd:' + b.sd : b.mode || '', dhOpen = opsOpvDh === ttUKey(h) + '|begin', can = !h.prev && !h.exitStart;
+    H.push(`<div class="opv-end ${b0[0] ? 'ok' : 'ng'}" data-tk="${kh}"><div class="opv-h"><span class="opv-tag">${b0[0] ? '始まり' : '現れる'}</span><span>${opsEsc(b0[1])}${h.fromSiding ? ` <small>(${ttSHMS(h.P[0])} に出て ${ttSHMS(h.A[1])} ホーム)</small>` : ''}</span></div>`
+      + (can ? `<div class="opv-f"><label>どこから<select data-k="beginx"><option value="">${b0[0] ? '自動(上のとおり)' : '未設定(突然現れる)'}</option><option value="plat"${cur === 'plat' ? ' selected' : ''}>${opsEsc(st)} ホームで夜間留置</option>${opsSidings(st).map(sd => `<option value="sd:${sd.e}"${cur === 'sd:' + sd.e ? ' selected' : ''}>${opsEsc(st)} ${opsEsc(sd.label)}で夜間留置</option>`).join('')}${DEPOT_NAME[st] ? `<option value="depot"${cur === 'depot' ? ' selected' : ''}>${opsEsc(DEPOT_NAME[st])}から出庫</option>` : ''}<option value="dh"${dhOpen ? ' selected' : ''}>別の駅の車庫・留置線から回送で来る…</option></select></label>`
+        + (b.mode === 'sd' || b.mode === 'depot' ? `<label>ホームに着く<input data-k="begin.back" value="${opsEsc(b.back || '')}" placeholder="${ttSHMS(opsDep(h) * 60 - 110)}"></label>` : '')
+        + `<label>${opsEsc(st)}の番線<select data-plat="${opsEsc(st)}" data-hl>${opsTrackOpts(st, (opsSetOf(h).plat || {})[st], false, opsTracksFor(h, 0))}</select></label>`
+        + (dhOpen ? opsOpvDhForm(st, null, h) : '') + `</div>` : '') + `</div>`);
+  }
+  ch.forEach((x, i) => {
+    const kx = opsEsc(ttUKey(x)), n = x.names.length;
+    H.push(`<div class="opv-tr${x === t ? ' on' : ''}${x.dh ? ' dh' : ''}" data-go="${kx}"><span class="opv-t">${opsT(x, 0)}<br>${opsT(x, n - 1)}</span><span class="opv-m"><b>${opsEsc(x.no)}</b> ${opsEsc(opsTy(x))} ${x.cars || '?'}両${x.dh ? (x.user ? ' <i>手で足した回送</i>' : ' <i>自動の回送</i>') : ''}<br>${opsEsc(x.names[0])} → ${opsEsc(opsLast(x))}${n > 2 ? ` <small>(途中${n - 2}駅)</small>` : ''}</span><span class="opv-b">${x.dh && x.user ? `<button data-b="dhfix" data-tk="${kx}">回送を直す</button>` : ''}<button data-go="${kx}">細かく</button></span></div>`);
+    if (i < ch.length - 1) {   // 折り返し・つなぎ
+      const y = ch[i + 1], st = opsLast(x), u = opsSetOf(x).turn || {}, cur = u.mode === 'sd' ? 'sd:' + u.sd : u.mode || '', nc = opsNextCands(x); if (!nc.includes(y)) nc.unshift(y);
+      const same = y.names[0] === st;
+      H.push(`<div class="opv-turn" data-tk="${kx}"><div class="opv-h"><span class="opv-tag">${same ? '折り返し' : 'つなぎ'}</span><span>${opsEsc(st)} ${opsT(x, n - 1)}着 → ${opsT(y, 0)}発 <small>(${Math.round(opsDep(y) - opsArr(x))}分)</small><br><small>いま: ${opsEsc(opsTurnTxt(x))}</small></span></div><div class="opv-f">`
+        + (same && opsSidings(st).length ? `<label>折り返し方<select data-k="turnx">${opsSdSel(st, cur, true)}</select></label>` + (u.mode === 'sd' ? `<label>ホームを出る<input data-k="turn.lv" value="${opsEsc(u.lv || '')}" placeholder="${ttSHMS(opsArr(x) * 60 + 40)}"></label><label>ホームに戻る<input data-k="turn.back" value="${opsEsc(u.back || '')}" placeholder="${ttSHMS(opsDep(y) * 60 - 50)}"></label>` : '') : '')
+        + `<label>着く番線<select data-plat="${opsEsc(st)}" data-hl>${opsTrackOpts(st, (opsSetOf(x).plat || {})[st], false, opsTracksFor(x, n - 1))}</select></label>`
+        + `<label>次の列車<select data-k="next">${nc.map(d => `<option value="${opsEsc(ttUKey(d))}"${d === y ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars || '?'}両 ${opsEsc(opsLast(d))}行${d.prev && d.prev !== x ? '(いまは' + opsEsc(d.prev.no) + 'から)' : ''}</option>`).join('')}</select></label><button data-b="cut">ここで切る</button></div></div>`);
+    }
+  });
+  // 終わり
+  { const st = opsLast(z), f = opsSetOf(z).fin || {}, cur = f.mode === 'sd' ? 'sd:' + f.sd : f.mode || '', dhOpen = opsOpvDh === ttUKey(z) + '|fin', can = !z.next && !z.exitEnd;
+    H.push(`<div class="opv-end ${e1[0] ? 'ok' : 'ng'}" data-tk="${kz}"><div class="opv-h"><span class="opv-tag">${e1[0] ? '終わり' : '消える'}</span><span>${opsEsc(e1[1])}</span></div>`
+      + (can ? `<div class="opv-f"><label>どこへ<select data-k="finx"><option value="">${e1[0] ? '自動(上のとおり)' : '未設定(消える)'}</option><option value="plat"${cur === 'plat' ? ' selected' : ''}>${opsEsc(st)} ホームで夜間留置</option>${opsSidings(st).map(sd => `<option value="sd:${sd.e}"${cur === 'sd:' + sd.e ? ' selected' : ''}>${opsEsc(st)} ${opsEsc(sd.label)}へ入って夜間留置</option>`).join('')}${DEPOT_NAME[st] ? `<option value="depot"${cur === 'depot' ? ' selected' : ''}>${opsEsc(DEPOT_NAME[st])}へ入庫</option>` : ''}<option value="dh"${dhOpen ? ' selected' : ''}>別の駅の車庫・留置線まで回送で行く…</option></select></label>`
+        + (f.mode === 'sd' || f.mode === 'depot' ? `<label>ホームを出る<input data-k="fin.lv" value="${opsEsc(f.lv || '')}" placeholder="${ttSHMS(opsArr(z) * 60 + 40)}"></label>` : '')
+        + `<label>${opsEsc(st)}の番線<select data-plat="${opsEsc(st)}" data-hl>${opsTrackOpts(st, (opsSetOf(z).plat || {})[st], false, opsTracksFor(z, z.names.length - 1))}</select></label>`
+        + (dhOpen ? opsOpvDhForm(st, z, null) : '') + `</div>` : '') + `</div>`);
+  }
+  return `<h3 class="opsh">運用表(この車両の1日・${ch.length}本)</h3><div class="opv">${H.join('')}</div>`;
+}
+function opsOpvDhForm(st, a, d) {   // 回送で来る・行く駅を選ぶ
+  const sp = opsDhSpots(st, a, d), mm = s => Math.round(s / 60) + '分';
+  return `<label>車庫・留置線のある駅<select data-dhsp>${sp.map(x => `<option value="${opsEsc(x.st)}">${opsEsc(x.st)}${x.depot ? '(' + opsEsc(DEPOT_NAME[x.st]) + ')' : ''} ${mm(a ? x.go : x.back)}${x.rev ? `(${opsEsc(st)}で向きを変える)` : ''}</option>`).join('') || '<option value="">回送で行ける駅がありません</option>'}</select></label><button data-b="${a ? 'mkdhend' : 'mkdhbegin'}" class="primary"${sp.length ? '' : ' disabled'}>回送を作る</button>`;
+}
+function opsOpvChange(t, s) {   // 運用表の選び(始まり・終わり・折り返し方)。扱ったら true
+  const k = s.dataset.k, v = s.value;
+  if (k === 'beginx' || k === 'finx') { const g = k === 'beginx' ? 'begin' : 'fin', key = ttUKey(t) + '|' + g;
+    if (v === 'dh') { opsOpvDh = key; opsTrainPanel($('opstrain').tr); return true; }
+    if (opsOpvDh === key) opsOpvDh = null;
+    opsEdit(t, o => { const old = o[g] || {}; if (!v) delete o[g]; else if (v === 'plat') o[g] = { mode: 'plat' }; else if (v === 'depot') o[g] = { mode: 'depot', lv: old.lv, back: old.back }; else o[g] = { mode: 'sd', sd: +v.slice(3), lv: old.lv, back: old.back }; });
+    return true; }
+  if (k === 'turnx') { opsEdit(t, o => { const old = o.turn || {}; if (!v) delete o.turn; else if (v === 'plat') o.turn = { mode: 'plat' }; else o.turn = { mode: 'sd', sd: +v.slice(3), lv: old.lv, back: old.back }; }); return true; }
+  if (s.matches('[data-dhsp]')) return true;
+  return false;
+}
+function opsOpvClick(t, el) {
+  const b = el.closest('button[data-b]'); if (!b) return false; const k = b.dataset.b;
+  if (k === 'mkdhbegin' || k === 'mkdhend') { const box = b.closest('.opv-f'), sel = box && box.querySelector('[data-dhsp]'), X = sel && sel.value; if (!X) return true;
+    opsOpvDh = null; if (k === 'mkdhbegin') opsDhSet(null, t, X, t.names[0]); else opsDhSet(t, null, X, opsLast(t)); return true; }
+  if (k === 'cut') { opsLinkSet(t, null); return true; }
+  if (k === 'dhfix' && t.user) { opsDhOpen(JSON.parse(JSON.stringify(t.user)), opsDayObj().dh.indexOf(t.user)); return true; }
+  return false;
+}
 function opsBeginTxt(h) {
   const st = h.names[0], e0 = h.route ? h.route.segs[0].e : null;
   if (h.exitStart) return [1, `図の外から入ってくる(${h.names[0]})`];
   if (h.vStart === 'depot') return [1, `${DEPOT_NAME[st] || st + 'の車庫'}から出庫`];
   if (h.fromSiding && h.stay) return [1, `${st} ${h.fromSiding.label || '留置線'}で夜間留置 → ${ttSHMS(h.A[1])} ホームへ`];
   if (h.stay) return [1, `${st} ${opsTrackLabel(st, e0)}で夜間留置`];
+  if (h.vStart === 'split' && h.formed) return [1, `${h.formed[0].no} が${st}で切り離した4両(運用の編集)`];
   if (h.formed) return [1, `品川で切り離した4両を組み合わせる(推定)`];
   if (h.fromSiding) return [0, `${st} ${h.fromSiding.label || '引上線'}に突然現れる(前の運用が未設定)`];
   return [0, `${st}に突然現れる(前の運用が未設定)`];
@@ -100,7 +167,7 @@ function opsTrainPanel(t) {
   if (probs.length) H.push(`<div class="opsprob">${probs.join('')}</div>`);
   // 車両の1日
   const ch = opsChain(t), b0 = opsBeginTxt(ch[0]), e1 = opsEndTxt(ch[ch.length - 1]);
-  H.push(`<h3 class="opsh">この車両の1日(${ch.length}本)</h3><ol class="opsch"><li class="${b0[0] ? 'ok' : 'ng'}">${b0[0] ? '始' : '現'}　${opsEsc(b0[1])}</li>` + ch.map((x, i) => `<li data-go="${opsEsc(ttUKey(x))}" class="${x === t ? 'on' : ''}${x.dh ? ' dh' : ''}"><b>${opsEsc(x.no)}</b> ${opsEsc(opsTy(x))} ${x.cars || '?'}両　${opsLine(x)}${i < ch.length - 1 ? `<small>${opsEsc(opsTurnTxt(x))}</small>` : ''}</li>`).join('') + `<li class="${e1[0] ? 'ok' : 'ng'}">${e1[0] ? '終' : '消'}　${opsEsc(e1[1])}</li></ol>`);
+  H.push(opsOpv(t, ch, b0, e1));
   // 前・次の運用
   const pc = opsPrevCands(t), nc = t.exitEnd ? [] : opsNextCands(t);
   if (t.prev && !pc.includes(t.prev)) pc.unshift(t.prev);
@@ -129,6 +196,21 @@ function opsTrainPanel(t) {
       H.push(`<h3 class="opsh">1日の終わり(${opsEsc(st1)})</h3><div class="opsform"><label>扱い<select data-k="fin.mode"><option value="">未設定(消える)</option><option value="plat"${f.mode === 'plat' ? ' selected' : ''}>ホームで夜間留置</option>${sds.length ? `<option value="sd"${f.mode === 'sd' ? ' selected' : ''}>留置線へ入って夜間留置</option>` : ''}${DEPOT_NAME[st1] ? `<option value="depot"${f.mode === 'depot' ? ' selected' : ''}>${opsEsc(DEPOT_NAME[st1])}へ入庫</option>` : ''}</select></label>`
         + (f.mode === 'sd' || (f.mode === 'depot' && sds.length) ? `<label>${f.mode === 'sd' ? '留置線' : '通る線'}<select data-k="fin.sd" data-hl>${opsSdOpts(st1, f.sd, f.mode === 'depot' ? '自動' : '')}</select></label><label>ホームを出る時刻(入庫)<input data-k="fin.lv" value="${opsEsc(f.lv || '')}" placeholder="${ttSHMS(opsArr(t) * 60 + 70)}"></label>` : '')
         + `</div>`);
+    }
+  }
+  // 切り離し(12両で止まる途中の駅があるとき)
+  { const sts = opsSplitSts(t), sp = set.split || {};
+    if (sts.length) {
+      const cpl = t.cpl && t.cpl.unit, st = sp.st && sts.includes(sp.st) ? sp.st : (cpl && sts.includes('品川') ? '品川' : sts.includes('金沢文庫') ? '金沢文庫' : sts[0]), q = t.names.indexOf(st), side = cpl ? t.cpl.side : sp.side === 'front' ? 'front' : 'rear';
+      const dc = ttList.filter(d => opsReal(d) && d.names[0] === st && opsDep(d) >= t.ev[q].dep + 2 && opsDep(d) - t.ev[q].dep <= 180).sort((x, y) => opsDep(x) - opsDep(y)).slice(0, 30);
+      const done = t.splitDone, auto = opsSplitAuto(t);
+      H.push(`<h3 class="opsh">切り離し(12両 → 8両)</h3><div class="opsform"><label>切り離した4両<select data-k="split.mode"><option value="">自動(${opsEsc(auto)})</option><option value="sd"${sp.mode === 'sd' ? ' selected' : ''}>引上線・留置線に残す(その日はそこ)</option><option value="depot"${sp.mode === 'depot' ? ' selected' : ''}>車庫線へ入る(入庫)</option><option value="link"${sp.mode === 'link' ? ' selected' : ''}>その駅から出る列車になる</option></select></label>`
+        + (sp.mode ? `<label>駅<select data-k="split.st">${sts.map(x => `<option${x === st ? ' selected' : ''}>${opsEsc(x)}</option>`).join('')}</select></label>`
+          + (cpl ? `<label>切り離す側<select disabled><option>${side === 'front' ? '前の4両' : '後ろの4両'}(増結した側)</option></select></label>` : `<label>切り離す側<select data-k="split.side"><option value="rear"${side === 'rear' ? ' selected' : ''}>後ろの4両</option><option value="front"${side === 'front' ? ' selected' : ''}>前の4両</option></select></label>`)
+          + `<label>入る線<select data-k="split.sd" data-hl>${opsSdOpts(st, sp.sd, '自動')}</select></label>`
+          + (sp.mode === 'link' ? `<label>なる列車(${opsEsc(st)}から出る)<select data-k="split.d"><option value="">選ぶ</option>${dc.map(d => `<option value="${opsEsc(ttUKey(d))}"${ttUKey(d) === sp.d ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars || '?'}両 ${opsEsc(opsLast(d))}${d.prev ? '(前の運用あり)' : ''}</option>`).join('')}</select></label>` : '')
+          + `<label>4両が動き出す時刻<input data-k="split.lv" value="${opsEsc(sp.lv || '')}" placeholder="${ttSHMS(side === 'front' ? t.P[q + t.k0] - 25 : t.P[q + t.k0] + 40)}"></label>` : '')
+        + `</div>` + (done ? `<p class="hint">いま: ${opsEsc(done.st)}で${done.side === 'front' ? '前' : '後ろ'}の4両を ${ttSHMS(done.at)} に${opsEsc(opsTrackLabel(done.st, done.sd))}へ${done.d ? ` → ${opsEsc(done.d.no)}(${opsT(done.d, 0)}発)になる` : done.mode === 'sd' ? '入れて、その日はそこ' : '入れて入庫'}</p>` : ''));
     }
   }
   // 番線(ホームが2本以上ある駅だけ)
@@ -173,7 +255,8 @@ function opsMoveCause(t, ci, key) {   // 原因の列車を、その駅の空い
 function opsMsg(s) { const m = $('opstrain').querySelector('.opsnote') || (() => { const p = document.createElement('p'); p.className = 'opsnote hint'; $('opstrain').prepend(p); return p; })(); m.textContent = s; }
 function opsGoKey(key) { const x = opsFind(key); if (!x) return; if (x.g) ttSelect(x); else { opsJump(opsDep(x)); ttSelect(x); } }
 $('opstrain').addEventListener('click', e => {
-  const t = $('opstrain').tr; if (!t) return;
+  const tkE = e.target.closest('[data-tk]'), t = tkE ? opsFind(tkE.dataset.tk) : $('opstrain').tr; if (!t) return;
+  if (opsOpvClick(t, e.target)) return;
   const go = e.target.closest('[data-go]'); if (go) { opsGoKey(go.dataset.go); return; }
   const mv = e.target.closest('[data-mv]'); if (mv) { const [ci, key] = mv.dataset.mv.split('|'); opsMoveCause(t, +ci, key); return; }
   const wd = e.target.closest('[data-wdel]'); if (wd) { const [st, u] = wd.dataset.wdel.split('|'); opsEdit(t, o => { const w = o.wait || {}; if (+u) w.add = (w.add || []).filter(x => x.st !== st); else w.del = [...new Set([...(w.del || []), st])]; o.wait = w; }); return; }
@@ -195,8 +278,8 @@ $('opstrain').addEventListener('click', e => {
     opsEdit(t, o => { const w = o.wait || {}; w.add = (w.add || []).filter(x => x.st !== c.st).concat([{ st: c.st, after: c.after, as, ds }]); o.wait = w; }); }
 });
 $('opstrain').addEventListener('change', e => {
-  const t = $('opstrain').tr; if (!t) return;
-  const s = e.target;
+  const s = e.target, tkE = s.closest('[data-tk]'), t = tkE ? opsFind(tkE.dataset.tk) : $('opstrain').tr; if (!t) return;
+  if (opsOpvChange(t, s)) return;
   if (s.dataset.plat != null) { const st = s.dataset.plat, v = s.value; opsEdit(t, o => { o.plat = Object.assign({}, o.plat); if (v === '') delete o.plat[st]; else o.plat[st] = +v; }); return; }
   const k = s.dataset.k; if (!k) return;
   if (k === 'prev') { if (!s.value) opsPrevCut(t); else { const a = opsFind(s.value); if (a) opsLinkSet(a, t); } return; }
@@ -204,13 +287,13 @@ $('opstrain').addEventListener('change', e => {
   const [grp, f] = k.split('.');
   let v = s.value.trim();
   if ((f === 'lv' || f === 'back') && v && ttHMS(v) == null) { opsMsg('時刻は 10:15 か 10:15:30 の形で入れてください'); return; }
-  opsEdit(t, o => { const g = Object.assign({}, o[grp]); if (v === '') delete g[f]; else g[f] = f === 'sd' ? +v : v; if (f === 'mode' && !v) { delete o[grp]; return; } if (f === 'mode' && v === 'sd' && g.sd == null) { const sd = opsSidings(grp === 'begin' ? t.names[0] : opsLast(t))[0]; if (sd) g.sd = sd.e; } o[grp] = g; });
+  opsEdit(t, o => { const g = Object.assign({}, o[grp]); if (v === '') delete g[f]; else g[f] = f === 'sd' ? +v : v; if (f === 'mode' && !v) { delete o[grp]; return; } if (f === 'mode' && v === 'sd' && g.sd == null && grp !== 'split') { const sd = opsSidings(grp === 'begin' ? t.names[0] : opsLast(t))[0]; if (sd) g.sd = sd.e; } o[grp] = g; });
 });
 $('opstrain').addEventListener('focusin', e => { const s = e.target; if (s.matches('select[data-hl]')) opsHL(s.value); });
 $('opstrain').addEventListener('mouseover', e => { const s = e.target.closest('select[data-hl],[data-hlv]'); if (s) opsHL(s.dataset.hlv != null ? s.dataset.hlv : s.value); });
 $('opstrain').addEventListener('input', e => { if (e.target.matches('select[data-hl]')) opsHL(e.target.value); });
 // ===== 回送の編集(駅・停車/通過・時刻・番線、始まり・終わり) =====
-function opsDhOpen(x, idx) { if (!x.stops) x.stops = [{ st: x.from || '', dep: x.dep || '' }, { st: x.to || '', arr: x.arr || '' }]; opsDh = { x, idx }; $('opscard').open = true; opsDhRender(); $('dhed').scrollIntoView({ block: 'nearest' }); }
+function opsDhOpen(x, idx) { if (!x.stops) x.stops = [{ st: x.from || '', dep: x.dep || '' }, { st: x.to || '', arr: x.arr || '' }]; opsDh = { x, idx }; opsDockShow('edit'); opsDhRender(); $('dhed').scrollIntoView({ block: 'nearest' }); }
 function opsDhRender() {
   const box = $('dhed'); if (!opsDh) { box.innerHTML = `<div class="btns"><button data-d="new">回送を新しく作る</button></div>`; return; }
   const x = opsDh.x, S = x.stops, st0 = S[0].st, st1 = S[S.length - 1].st;
@@ -305,6 +388,7 @@ function opsRender() {
   $('opsvan').rows = rows;
   $('opslink').disabled = !(opsSelA && opsSelD);
   $('opslink').textContent = opsSelA && opsSelD ? `${opsSelA.no} → ${opsSelD.no} をつなぐ` + opsMark(opsSelA, opsSelD) : '消える1本と現れる1本を選んでつなぐ';
+  opsDhSetRender();
   // 編集の一覧
   const L = [];
   U.link.forEach((x, i) => L.push(`<li><span>${x.auto ? '<i>案</i> ' : ''}つなぐ ${opsEsc(x.a)} → ${opsEsc(x.d)}(${opsEsc(x.st)})</span><button data-x="link:${i}">✕</button></li>`));
@@ -398,6 +482,53 @@ $('opsclr').onclick = () => {
   try { localStorage.removeItem('kq-opsuser'); } catch (e) { } USER_OPS = JSON.parse(JSON.stringify(USER_OPS_FILE || {})); $('opsclr').textContent = 'ブラウザの編集を消す'; opsSave();
 };
 opsDhRender();
+// ===== 回送をセットで足す =====
+// 駅で消える列車・現れる列車から、車庫・留置線のある駅との回送を作る: 往復してつなぐ(消 → 回送で行って折り返す → 回送で戻る → 現)、入庫(消 → 回送 → 車庫)、出庫(車庫 → 回送 → 現)
+// 走る時間は、時刻表でその2駅を走る列車のいちばん速い時間(停車を含む)。編集の一覧の「直す」で駅・時刻・番線を細かく直せる
+const opsRunMemo = new Map();
+function opsRun(a, b) {   // 秒(見つからなければ null)
+  const k = a + '|' + b; if (opsRunMemo.has(k)) return opsRunMemo.get(k); let best = null;
+  for (const t of ttList) { if (t.dh || !t.names) continue; const i = t.names.indexOf(a), j = t.names.indexOf(b); if (i < 0 || j < 0 || i >= j) continue;
+    const e0 = t.ev[i], e1 = t.ev[j], d = (e1.as != null ? e1.as : e1.arr * 60) - (e0.ds != null ? e0.ds : e0.dep * 60); if (d > 0 && (best == null || d < best)) best = d; }
+  opsRunMemo.set(k, best); return best;
+}
+// 時刻表に p → s → x の順に止まる列車があるか(x が、p から s へ来た向きの先にある)
+const opsOrdMemo = new Map();
+function opsInOrder(p, s, x) { if (!p || !x) return true; const k = p + '|' + s + '|' + x; if (opsOrdMemo.has(k)) return opsOrdMemo.get(k);
+  const v = ttList.some(t => { if (!t.names) return false; const i = t.names.indexOf(p), j = t.names.indexOf(s), m = t.names.indexOf(x); return i >= 0 && j > i && m > j; }); opsOrdMemo.set(k, v); return v; }
+function opsDhSpots(st, a, d) {   // 回送で行ける車庫・留置線のある駅。着いた向きのまま行ける(a)・出る向きのまま戻れる(d)駅を先に、その中で車庫のある駅、近い順
+  const L = [], pa = a && a.names[a.names.length - 2], nd = d && d.names[1];
+  for (const x of new Set([...Object.keys(DEPOT_NAME), ...SIDINGS.keys()])) { if (x === st || !stByName.has(x)) continue; const go = opsRun(st, x), back = opsRun(x, st); if (go == null || back == null || Math.max(go, back) > 45 * 60) continue;
+    const rev = (a && !opsInOrder(pa, st, x)) || (d && !opsInOrder(x, st, nd));   // st で向きを変えることになる
+    L.push({ st: x, go, back, depot: !!DEPOT_NAME[x], rev }); }
+  return L.sort((p, q) => (p.rev - q.rev) || (q.depot - p.depot) || ((p.go + p.back) - (q.go + q.back))).slice(0, 10);
+}
+const DH_DWELL = 180, DH_TURN = 240;   // 着いてから回送で出るまで・回送が着いてから次の列車が出るまで(秒)、折り返す駅で止まっている最短(秒)
+function opsDhNo(base, U) { let no = base + '回'; for (let i = 2; U.dh.some(x => x.no === no); i++) no = base + '回' + i; return no; }
+function opsDhSetRender() {
+  const box = $('opsdhset'); if (!box) return; const a = opsSelA, d = opsSelD, st = opsStn;
+  if (!a && !d) { box.innerHTML = '<p class="hint">消・現を選ぶと、車庫・留置線のある駅との回送をセットで足せます(往復してつなぐ・入庫・出庫)。</p>'; return; }
+  const sp = opsDhSpots(st, a, d), mm = s => Math.round(s / 60) + '分', rv = x => x.rev ? `(${st}で向きを変える)` : '';
+  let opts = [], what = '';
+  if (a && d) { const gap = (opsDep(d) - opsArr(a)) * 60; what = `${a.no} → 回送で往復 → ${d.no}(あいだ ${mm(gap)})`;
+    opts = sp.filter(x => DH_DWELL * 2 + x.go + x.back + DH_TURN <= gap).map(x => ({ v: x.st, l: `${x.st}${x.depot ? '(' + DEPOT_NAME[x.st] + ')' : ''} 行き${mm(x.go)}・帰り${mm(x.back)}・そこで${mm(gap - DH_DWELL * 2 - x.go - x.back)}${rv(x)}` })); }
+  else if (a) { what = `${a.no}(${opsLast(a)} ${hm(opsArr(a))}着)のあと回送で入庫`; opts = sp.map(x => ({ v: x.st, l: `${x.st}${x.depot ? '(' + DEPOT_NAME[x.st] + ')' : ''} ${mm(x.go)}${rv(x)}` })); }
+  else { what = `回送で出庫して ${d.no}(${d.names[0]} ${hm(opsDep(d))}発)`; opts = sp.map(x => ({ v: x.st, l: `${x.st}${x.depot ? '(' + DEPOT_NAME[x.st] + ')' : ''} ${mm(x.back)}${rv(x)}` })); }
+  box.innerHTML = `<div class="opsform"><label>${opsEsc(what)}<select id="opsdhsp">${opts.map(o => `<option value="${opsEsc(o.v)}">${opsEsc(o.l)}</option>`).join('') || '<option value="">回送で行ける車庫・留置線の駅がありません(時間が足りない)</option>'}</select></label></div>`
+    + `<div class="btns"><button id="opsdhgo"${opts.length ? '' : ' disabled'}>${a && d ? '回送で往復してつなぐ' : a ? '回送で入庫する' : '回送で出庫する'}</button></div>`;
+  $('opsdhgo').onclick = () => { const x = $('opsdhsp').value; if (x) opsDhSet(a, d, x); };
+}
+function opsDhSet(a, d, X, st0) {   // 回送を作って保存する(st0 = 消える・現れる駅。省略すると選んでいる駅)
+  const U = opsDayObj(), st = st0 || opsStn, go = opsRun(st, X), back = opsRun(X, st), add = [];
+  const mk = (no, from, dep, to, arr, cars) => ({ no, cars, stops: [{ st: from, dep: ttSHMS(dep) }, { st: to, arr: ttSHMS(arr) }], from, dep: ttSHMS(dep), to, arr: ttSHMS(arr) });
+  if (a) { const dep = opsArr(a) * 60 + DH_DWELL, x = mk(opsDhNo(a.no, U), st, dep, X, dep + go, a.cars || 8); x.prev = a.no; add.push(x); }
+  if (d) { const arr = opsDep(d) * 60 - DH_DWELL, x = mk(opsDhNo(d.no, U), X, arr - back, st, arr, d.cars || (a && a.cars) || 8); x.next = d.no; add.push(x); }
+  if (a && d) { add[0].next = add[1].no; add[1].prev = add[0].no; }   // 行きと帰りをつなぐ(折り返し方は自動。直すで車庫線・時刻を決められる)
+  else if (a) add[0].fin = DEPOT_NAME[X] ? { mode: 'depot' } : { mode: 'sd', sd: (opsSidings(X)[0] || {}).e };
+  else add[0].begin = DEPOT_NAME[X] ? { mode: 'depot' } : { mode: 'sd', sd: (opsSidings(X)[0] || {}).e };
+  U.dh.push(...add); opsSelA = opsSelD = null; opsSave();
+  $('opspmsg').textContent = `回送を足しました: ${add.map(x => `${x.no} ${x.from} ${x.dep.slice(0, 5)} → ${x.to} ${x.arr.slice(0, 5)}`).join('、')}。「反映」で計算し直します(時刻・番線は編集の一覧の「直す」で直せます)`;
+}
 // ===== 番線使用図 =====
 // 駅の線(ホーム・待避線・引上線・留置線)ごとに、計画で押さえた時間帯(ttRes)を帯で出す。同じ線を同時に使っている帯(縦列・ぶつかり)は赤
 // 帯を押すと、その列車の運用の設定を開いて時計をその時刻へ。線の名前に乗せると図の上で光る。探すのは人、ここは見る道具だけ
@@ -457,9 +588,9 @@ function occRender() {
   $('occinfo').textContent = `${ttSHMS(t0).slice(0, 5)}〜${ttSHMS(t1).slice(0, 5)}: ${nin} 本 ・ この駅の重なり(終日) ${nov} 本` + (rows.length ? '' : ' ・この駅には線がありません');
 }
 function occNowLine() { const l = $('occnowl'); if (!l || !occGeo) return; const on = ttClock >= occGeo.t0 && ttClock <= occGeo.t1, x = on ? occGeo.X(ttClock) : -10; l.setAttribute('x1', x); l.setAttribute('x2', x); }
-function occOpen(st, at) { if (st) occSt = st; if (at != null) occT0 = Math.max(0, Math.floor((at - occW / 4) / 600) * 600); $('occ').hidden = false; occRender(); }
+function occOpen(st, at) { if (st) occSt = st; if (at != null) occT0 = Math.max(0, Math.floor((at - occW / 4) / 600) * 600); opsDockShow('occ'); }
 $('occopen').onclick = () => occOpen(opsStn || (ttSel && ttSel.names && ttSel.names[0]), occW >= 79200 ? null : ttClock);
-$('occclose').onclick = () => { $('occ').hidden = true; opsHL(null); };
+$('occclose').onclick = () => { opsDockShow('edit'); opsHL(null); };
 $('occst').onchange = () => { occSt = $('occst').value; occRender(); };
 $('occw').onchange = () => { occW = +$('occw').value; if (occW >= 79200) occT0 = 4 * 3600; else occT0 = Math.max(0, Math.floor((ttClock - occW / 4) / 600) * 600); occRender(); };
 $('occprev').onclick = () => { occT0 = Math.max(0, occT0 - occW / 2); occRender(); };
@@ -468,10 +599,147 @@ $('occnow').onclick = () => { occT0 = Math.max(0, Math.floor((ttClock - occW / 4
 $('occstn').onclick = () => { const s = ttSel && ttSel.names; if (!s) return; const i = s.indexOf(occSt); occSt = s[(i + 1) % s.length]; occRender(); };
 $('occbody').addEventListener('click', e => {
   const g = e.target.closest('g.occ-b'); if (!g || !occGeo) return; const b = occGeo[+g.dataset.i]; if (!b || !b.t) return;
-  $('opscard').open = true; opsGoKey(ttUKey(b.t)); opsJump(Math.floor(b.a / 60) + 1); occRender();
+  opsDockShow('edit'); opsGoKey(ttUKey(b.t)); opsJump(Math.floor(b.a / 60) + 1);
 });
 $('occbody').addEventListener('mouseover', e => { const r = e.target.closest('g.occ-row'); opsHL(r ? r.dataset.e : null); });
 $('occbody').addEventListener('mouseleave', () => opsHL(null));
 setInterval(() => { if (!$('occ').hidden) occNowLine(); }, 1000);
-{ const f = opsRefresh; opsRefresh = function () { f(); occCnt = null; occRender(); }; }
+{ const f = opsRefresh; opsRefresh = function () { opsRunMemo.clear(); opsOrdMemo.clear(); f(); occCnt = null; occRender(); }; }
 { const f = opsTrainPanel; opsTrainPanel = function (t) { const r = f.apply(this, arguments); if (!$('occ').hidden) occRender(); return r; }; }
+
+// ===== 編集画面(画面の下に広げる) =====
+// 地図の下に出して、地図は縮むだけ(隠さない)。タブ: 編集(駅・列車・回送・編集の一覧の4列) / 番線使用図。上の縁をドラッグで高さを変える。開いているか・高さはこのブラウザに覚える
+$('opstrainbox').prepend($('opstrain'));
+const opsLS = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+function opsDockShow(tab) {
+  const d = $('opsdock'), was = !d.hidden; d.hidden = false; opsLS('kq-dock', '1'); $('opsdockbtn').classList.add('on');
+  if (tab) { $('dockedit').hidden = tab !== 'edit'; $('occ').hidden = tab !== 'occ'; $('dtabedit').classList.toggle('on', tab === 'edit'); $('occopen').classList.toggle('on', tab === 'occ'); }
+  if (!$('occ').hidden) occRender(); else opsRender();
+  if (!was && ttSel && ttList.includes(ttSel)) opsTrainPanel(ttSel);
+  if (!was) window.dispatchEvent(new Event('resize'));
+}
+function opsDockHide() { $('opsdock').hidden = true; opsLS('kq-dock', '0'); $('opsdockbtn').classList.remove('on'); opsHL(null); window.dispatchEvent(new Event('resize')); }
+$('opsdockbtn').onclick = () => $('opsdock').hidden ? opsDockShow() : opsDockHide();
+$('opsdockopen').onclick = () => opsDockShow('edit');
+$('opsdockclose').onclick = opsDockHide;
+$('dtabedit').onclick = () => opsDockShow('edit');
+{ const h = +opsLS('kq-dockh'); if (h >= 160) $('opsdock').style.setProperty('--dockh', h + 'px'); }
+$('dockgrip').addEventListener('pointerdown', e => {
+  const d = $('opsdock'), y0 = e.clientY, h0 = d.getBoundingClientRect().height; e.preventDefault(); $('dockgrip').setPointerCapture(e.pointerId);
+  const mv = ev => { const h = Math.max(160, Math.min(window.innerHeight * 0.85, h0 + y0 - ev.clientY)); d.style.setProperty('--dockh', Math.round(h) + 'px'); };
+  const up = () => { $('dockgrip').removeEventListener('pointermove', mv); $('dockgrip').removeEventListener('pointerup', up); opsLS('kq-dockh', Math.round(d.getBoundingClientRect().height)); window.dispatchEvent(new Event('resize')); if (!$('occ').hidden) occRender(); };
+  $('dockgrip').addEventListener('pointermove', mv); $('dockgrip').addEventListener('pointerup', up);
+});
+if (opsLS('kq-dock') === '1') opsDockShow('edit');
+
+// ===== まとめて(駅ごとの時間・列車の番線を一括で変える) =====
+// 駅の時間は USER_OPS.stn(平日・土休日とも。ttcore.js の ttStn が読む)、列車の番線は その日の U.train[キー].plat
+const BK_KQ = new Set([...MAINL, ...BRANCH.split(' '), ...AIRPORT.trim().split(' '), '羽田空港第3ターミナル', '羽田空港第1・第2ターミナル']);
+const BK_TOEI = new Set(ASAL.filter(n => n !== '泉岳寺'));
+const bkGroup = st => BK_KQ.has(st) ? 'kq' : BK_TOEI.has(st) ? 'toei' : 'ks';
+const BK_K = [['in', '始発がホームに着く', '発車の何分前'], ['out', '終着の列車がホームを出る', '着いて何分後'], ['turn', '折り返しの最短', '分']];
+let bkSel = new Set(), bkQ = '', bkHit = [];
+function bkCounts() {
+  const c = new Map(); const g = st => { if (!c.has(st)) c.set(st, { o: 0, z: 0 }); return c.get(st); };
+  for (const t of ttList) { if (!opsReal(t) || t.dh) continue; g(t.names[0]).o++; g(opsLast(t)).z++; }
+  return c;
+}
+const bkStnObj = () => { if (!USER_OPS.stn) USER_OPS.stn = {}; return USER_OPS.stn; };
+function bkSetVal(st, k, v) {
+  const S = bkStnObj(); v = String(v == null ? '' : v).trim();
+  if (v === '' || isNaN(+v)) { if (S[st]) { delete S[st][k]; if (!Object.keys(S[st]).length) delete S[st]; } }
+  else { S[st] = Object.assign({}, S[st], { [k]: Math.max(0, +v) }); }
+}
+const bkFmt = v => v == null || v === '' ? '' : String(v);
+function bkStations() {
+  const C = bkCounts(), all = [...new Set([...STN_NAMES])];
+  return all.filter(st => stByName.has(st)).map(st => ({ st, c: C.get(st) || { o: 0, z: 0 }, g: bkGroup(st) }));
+}
+function bulkRender() {
+  const box = $('dockbulk'); if (!box || box.hidden) return;
+  const S = USER_OPS.stn || {}, A = S._all || {}, L = bkStations().filter(x => !bkQ || x.st.includes(bkQ));
+  const inp = (st, k, v, ph) => `<input class="bkv" data-st="${opsEsc(st)}" data-k="${k}" value="${opsEsc(bkFmt(v))}" placeholder="${opsEsc(ph)}" inputmode="decimal" aria-label="${opsEsc(st)} ${k}">`;
+  const def = { in: '0.4', out: '0.4', turn: '3' };
+  const rows = L.map(({ st, c }) => { const o = S[st] || {}; return `<tr><td><input type="checkbox" class="bkck" data-st="${opsEsc(st)}"${bkSel.has(st) ? ' checked' : ''}></td><td>${opsEsc(st)}</td><td class="n">${c.o || ''}</td><td class="n">${c.z || ''}</td>${BK_K.map(([k]) => `<td>${inp(st, k, o[k], bkFmt(A[k]) || def[k])}</td>`).join('')}</tr>`; }).join('');
+  const day = ttDay === 'hd' ? '土休日' : '平日';
+  const tySet = [...new Set(ttList.filter(opsReal).map(t => t.type))];
+  box.innerHTML = `<div class="bkwrap">
+  <section class="bkcol"><h3 class="dh">駅ごとの時間(平日・土休日とも)</h3>
+    <p class="hint">単位は分(0.5 = 30秒)。空欄の駅は「全駅の基準」の値、基準も空欄ならいつもの値(始発は発車の25秒前に着く・終着は25秒でホームを出る(引上線・車庫へは40秒)・折り返しは3分以上)。変えたら「反映(計算し直す)」。</p>
+    <div class="bkbar"><span>選ぶ:</span><button data-bk="all">全部</button><button data-bk="kq">京急</button><button data-bk="toei">都営</button><button data-bk="ks">京成・北総・芝山</button><button data-bk="o">始発のある駅</button><button data-bk="z">終着のある駅</button><button data-bk="none">外す</button><input id="bkq" placeholder="駅名で絞る" value="${opsEsc(bkQ)}" style="width:9em"></div>
+    <div class="bkbar"><span>選んだ <b>${bkSel.size}</b> 駅に:</span>${BK_K.map(([k, nm, u]) => `<label>${nm} <input id="bkset-${k}" inputmode="decimal" style="width:4em"> ${u}</label>`).join('')}<button data-bk="put" class="primary">入れる</button><button data-bk="clear">空欄に戻す</button></div>
+    <div class="bktw"><table class="bkt"><thead><tr><th></th><th>駅</th><th title="この日の始発の本数">始発</th><th title="この日の終着の本数">終着</th>${BK_K.map(([, nm, u]) => `<th>${nm}<br><small>${u}</small></th>`).join('')}</tr></thead>
+    <tbody><tr class="bkall"><td></td><td><b>全駅の基準</b></td><td></td><td></td>${BK_K.map(([k]) => `<td>${inp('_all', k, A[k], def[k])}</td>`).join('')}</tr>${rows}</tbody></table></div>
+  </section>
+  <section class="bkcol"><h3 class="dh">列車の番線をまとめて(${day})</h3>
+    <div class="bkbar"><label>駅 <select id="bkst">${STN_NAMES.map(s => `<option${s === (bkHit.st || opsStn) ? ' selected' : ''}>${opsEsc(s)}</option>`).join('')}</select></label>
+      <label>扱い <select id="bkkind"><option value="o">始発</option><option value="z">終着</option><option value="s">止まる列車</option><option value="a">通過も含む</option></select></label>
+      <label>時刻 <input id="bkt0" value="${opsEsc(bkHit.t0 || '04:00')}" style="width:4.5em">〜<input id="bkt1" value="${opsEsc(bkHit.t1 || '26:00')}" style="width:4.5em"></label>
+      <label>種別 <select id="bkty"><option value="">全部</option>${tySet.map(y => `<option value="${opsEsc(y)}">${opsEsc((TYPES[y] || { name: y }).name)}</option>`).join('')}</select></label>
+      <label>次の駅 <input id="bknx" placeholder="(空欄=全部)" style="width:7em"></label><button data-bk="find" class="primary">探す</button></div>
+    <div id="bkres">${bkResHTML()}</div>
+  </section></div>`;
+  if (bkHit.kind) $('bkkind').value = bkHit.kind; if (bkHit.ty != null) $('bkty').value = bkHit.ty; if (bkHit.nx) $('bknx').value = bkHit.nx;
+}
+function bkResHTML() {
+  if (!bkHit.list) return '<p class="hint">駅・扱い・時刻・種別で列車を探して、選んだ列車の番線をまとめて指定します(その駅で使う線)。1本ずつ直すときは「編集」タブの列車の運用で。</p>';
+  const st = bkHit.st, L = bkHit.list;
+  const cur = t => { const p = opsSetOf(t).plat; return p && p[st] != null ? opsTrackLabel(st, p[st]) : ''; };
+  return `<p class="hint">${opsEsc(st)}: ${L.length} 本${L.length > 300 ? '(先頭の300本を表示)' : ''}</p>
+    <div class="bkbar"><button data-bk="hall">全部選ぶ</button><button data-bk="hnone">外す</button><label>番線 <select id="bkplat">${opsTrackOpts(st, null, false)}</select></label><button data-bk="pset" class="primary">選んだ列車に指定</button><button data-bk="pdel">選んだ列車の指定を消す</button></div>
+    <ul class="opsl bkl">${L.slice(0, 300).map((x, i) => `<li><label><input type="checkbox" class="bkh" data-i="${i}"${x.on ? ' checked' : ''}> ${opsEsc(x.t.no || '?')} ${opsEsc(opsTy(x.t))} ${opsLine(x.t)}</label><small>${opsEsc(opsTrackLabel(st, x.t.route ? x.t.route.stopE[x.i + x.t.k0] : null))}${cur(x.t) ? ' 指定: ' + opsEsc(cur(x.t)) : ''}</small></li>`).join('')}</ul>`;
+}
+function bkFind() {
+  const st = $('bkst').value, kind = $('bkkind').value, t0 = ttHM($('bkt0').value), t1 = ttHM($('bkt1').value), ty = $('bkty').value, nx = $('bknx').value.trim();
+  const L = [];
+  for (const t of ttList) {
+    if (!opsReal(t) || t.dh) continue;
+    const i = t.names.indexOf(st); if (i < 0) continue;
+    if (kind === 'o' && i !== 0) continue; if (kind === 'z' && i !== t.names.length - 1) continue; if (kind === 's' && t.ev[i].thru) continue;
+    const m = i === 0 ? t.ev[i].dep : t.ev[i].arr; if (t0 != null && m < t0) continue; if (t1 != null && m > t1) continue;
+    if (ty && t.type !== ty) continue;
+    if (nx && t.names[i + 1] !== nx && !(i === t.names.length - 1 && t.next && t.next.names[1] === nx)) continue;
+    L.push({ t, i, on: true });
+  }
+  L.sort((a, b) => (a.i === 0 ? a.t.ev[0].dep : a.t.ev[a.i].arr) - (b.i === 0 ? b.t.ev[0].dep : b.t.ev[b.i].arr));
+  bkHit = { st, kind, t0: $('bkt0').value, t1: $('bkt1').value, ty, nx, list: L };
+  $('bkres').innerHTML = bkResHTML();
+}
+function bkPlat(v) {
+  if (!bkHit.list) return; const st = bkHit.st; let n = 0;
+  for (const x of bkHit.list.slice(0, 300)) { if (!x.on) continue; opsEdit(x.t, o => { o.plat = Object.assign({}, o.plat); if (v === '' || v == null) delete o.plat[st]; else o.plat[st] = +v; }); n++; }
+  opsDirty = true; $('bkres').innerHTML = bkResHTML();
+  const p = document.createElement('p'); p.className = 'opswarn'; p.textContent = `${n} 本の${v === '' ? '指定を消しました' : '番線を指定しました'}。「反映(計算し直す)」で計画に入ります。`; $('bkres').prepend(p);
+}
+$('dockbulk').addEventListener('click', e => {
+  const b = e.target.closest('[data-bk]'); if (!b) return; const k = b.dataset.bk, L = bkStations();
+  const pick = f => { bkSel = new Set(L.filter(f).map(x => x.st)); bulkRender(); };
+  if (k === 'all') pick(x => !bkQ || x.st.includes(bkQ));
+  else if (k === 'kq' || k === 'toei' || k === 'ks') pick(x => x.g === k);
+  else if (k === 'o') pick(x => x.c.o > 0); else if (k === 'z') pick(x => x.c.z > 0);
+  else if (k === 'none') { bkSel.clear(); bulkRender(); }
+  else if (k === 'put' || k === 'clear') {
+    if (!bkSel.size) { alertless('先に駅を選んでください'); return; }
+    for (const st of bkSel) for (const [q] of BK_K) { if (k === 'clear') bkSetVal(st, q, ''); else { const v = $('bkset-' + q).value; if (v.trim() !== '') bkSetVal(st, q, v); } }
+    opsSave(); opsDirty = true; bulkRender();
+  }
+  else if (k === 'find') bkFind();
+  else if (k === 'hall' || k === 'hnone') { (bkHit.list || []).forEach(x => x.on = k === 'hall'); $('bkres').innerHTML = bkResHTML(); }
+  else if (k === 'pset') bkPlat($('bkplat').value);
+  else if (k === 'pdel') bkPlat('');
+});
+function alertless(s) { const p = $('dockbulk').querySelector('.bkmsg') || (() => { const x = document.createElement('p'); x.className = 'opswarn bkmsg'; $('dockbulk').prepend(x); return x; })(); p.textContent = s; }
+$('dockbulk').addEventListener('change', e => {
+  const c = e.target;
+  if (c.classList.contains('bkck')) { if (c.checked) bkSel.add(c.dataset.st); else bkSel.delete(c.dataset.st); const b = $('dockbulk').querySelector('.bkbar b'); if (b) b.textContent = bkSel.size; return; }
+  if (c.classList.contains('bkv')) { bkSetVal(c.dataset.st, c.dataset.k, c.value); opsSave(); opsDirty = true; return; }
+  if (c.classList.contains('bkh')) { const x = bkHit.list && bkHit.list[+c.dataset.i]; if (x) x.on = c.checked; return; }
+});
+$('dockbulk').addEventListener('input', e => { if (e.target.id === 'bkq') { bkQ = e.target.value.trim(); const pos = e.target.selectionStart; bulkRender(); const q = $('bkq'); q.focus(); try { q.setSelectionRange(pos, pos); } catch (er) { } } });
+$('dtabbulk').onclick = () => opsDockShow('bulk');
+{ const f = opsDockShow; opsDockShow = function (tab) {
+  if (tab === 'bulk') { f(); $('dockedit').hidden = true; $('occ').hidden = true; $('dtabedit').classList.remove('on'); $('occopen').classList.remove('on'); $('dockbulk').hidden = false; $('dtabbulk').classList.add('on'); bulkRender(); return; }
+  if (tab) { $('dockbulk').hidden = true; $('dtabbulk').classList.remove('on'); }
+  return f.apply(this, arguments);
+}; }
+{ const f = opsRefresh; opsRefresh = function () { const r = f.apply(this, arguments); if (!$('dockbulk').hidden) { if (bkHit.list) bkHit.list = null; bulkRender(); } return r; }; }

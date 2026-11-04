@@ -169,8 +169,30 @@
   #ttlist b { white-space:nowrap; color:var(--ink); }
   #ttlist .rn { color:var(--sub); font:11px var(--font-num); white-space:nowrap; }
   #ttlist small { color:var(--sub); margin-left:auto; font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:11.5em; text-align:right; }
-  #occ { position:fixed; left:12px; right:12px; bottom:12px; max-height:48vh; z-index:30; display:flex; flex-direction:column; background:var(--elev); border:1px solid var(--line-2); border-radius:var(--r); box-shadow:0 10px 32px rgba(0,0,0,.35); }
-  #occ[hidden] { display:none; }
+  #opsdock { flex:none; height:var(--dockh, 46vh); min-height:160px; max-height:85vh; display:flex; flex-direction:column; margin:0 12px 12px; background:var(--elev); border:1px solid var(--line-2); border-radius:var(--r); position:relative; }
+  #opsdock[hidden] { display:none; }
+  #dockgrip { position:absolute; left:0; right:0; top:-7px; height:12px; cursor:ns-resize; z-index:2; touch-action:none; }
+  #dockgrip::after { content:""; position:absolute; left:50%; top:4px; width:48px; height:4px; margin-left:-24px; border-radius:2px; background:var(--line-2); }
+  .dockbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); }
+  .dockbar .dsp { flex:1; } .dockbar #opsstat { margin:0; } .dockbar button { min-height:28px; padding:3px 10px; width:auto; flex:none; }
+  .dtabs { display:flex; gap:2px; background:var(--surface-2); border-radius:var(--r-s); padding:2px; } .dtabs button { border:0; background:transparent; min-height:26px; } .dtabs button.on { background:var(--accent); color:#fff; }
+  .dpane { flex:1; min-height:0; } .dpane[hidden] { display:none !important; }
+  .dgrid { display:grid; grid-template-columns:minmax(240px,.9fr) minmax(420px,2fr) minmax(300px,1.1fr) minmax(220px,.8fr); overflow-x:auto; }
+  .dcol { min-width:0; overflow-y:auto; padding:8px 12px; border-right:1px solid var(--line); scrollbar-width:thin; } .dcol:last-child { border-right:0; }
+  .dh { margin:0 0 6px; font-size:12px; color:var(--sub); font-weight:600; }
+  .dcol .opsl { max-height:none; }
+  #opstrain:not([hidden]) ~ #opstrainhint { display:none; }
+  @media (max-width: 900px) { .dgrid { grid-template-columns:1fr; overflow-y:auto; } .dcol { border-right:0; border-bottom:1px solid var(--line); overflow:visible; } }
+  #occ { display:flex; flex-direction:column; }
+  #dockbulk { overflow:auto; }
+  .bkwrap { display:grid; grid-template-columns:minmax(420px,1.3fr) minmax(360px,1fr); gap:0; min-height:100%; }
+  .bkcol { min-width:0; padding:8px 12px; border-right:1px solid var(--line); } .bkcol:last-child { border-right:0; }
+  .bkbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:6px 0; font-size:12px; } .bkbar button { min-height:26px; padding:2px 9px; } .bkbar input, .bkbar select { width:auto; }
+  .bktw { overflow:auto; max-height:calc(var(--dockh, 46vh) - 150px); border:1px solid var(--line); border-radius:var(--r-s); }
+  .bkt { border-collapse:collapse; font-size:12px; width:100%; } .bkt th, .bkt td { padding:2px 6px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; } .bkt th { position:sticky; top:0; background:var(--surface-2); font-weight:600; } .bkt td.n { text-align:right; color:var(--muted, #888); }
+  .bkt .bkv { width:4.2em; padding:1px 4px; } .bkt tr.bkall td { background:var(--surface-2); }
+  .bkl li label { display:flex; gap:6px; align-items:center; cursor:pointer; } .bkl li small { margin-left:auto; color:var(--muted, #888); }
+  @media (max-width: 900px) { .bkwrap { grid-template-columns:1fr; } .bkcol { border-right:0; border-bottom:1px solid var(--line); } }
   .occbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line); }
   .occbar #occinfo { flex:1; min-width:160px; margin:0; }
   .occbar select { width:auto; flex:0 0 auto; min-width:0; } .occbar #occst { max-width:240px; } .occbar button { min-height:28px; padding:3px 10px; }
@@ -214,6 +236,20 @@
   .opshl { fill:none; stroke:#ff3df0; stroke-width:4.5; stroke-linecap:round; opacity:.85; pointer-events:none; }
   #opstrain { margin:6px 0 8px; border-top:1px solid var(--line); padding-top:6px; }
   #opstrain summary { font-weight:700; font-size:12.5px; cursor:pointer; }
+  .opv { display:flex; flex-direction:column; gap:4px; margin-bottom:10px; }
+  .opv > div { border:1px solid var(--line); border-radius:var(--r-s); padding:6px 8px; font-size:12.5px; background:var(--surface); }
+  .opv-h { display:flex; gap:8px; align-items:flex-start; } .opv-h small { color:var(--sub); }
+  .opv-tag { flex:none; font-size:11px; font-weight:700; padding:1px 6px; border-radius:4px; background:var(--surface-3); color:var(--ink-2); }
+  .opv-end.ok .opv-tag { background:var(--accent-soft); color:var(--ok); } .opv-end.ng { border-color:var(--bad); } .opv-end.ng .opv-tag { background:var(--bad-soft); color:var(--bad); }
+  .opv-f { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:flex-end; margin-top:6px; }
+  .opv-f label { display:flex; flex-direction:column; gap:2px; font-size:11px; color:var(--sub); min-width:0; }
+  .opv-f select, .opv-f input { font-size:12px; max-width:260px; } .opv-f input { width:96px; }
+  .opv-tr { display:flex; gap:10px; align-items:center; cursor:pointer; border-left:4px solid var(--accent) !important; }
+  .opv-tr:hover { background:var(--surface-2) !important; } .opv-tr.on { background:var(--accent-soft) !important; outline:1px solid var(--accent); }
+  .opv-tr.dh { border-left:4px dashed var(--sub) !important; } .opv-tr.dh i { color:var(--sub); font-style:normal; font-size:11px; }
+  .opv-t { font-family:var(--font-num); color:var(--ink-2); line-height:1.35; flex:none; } .opv-m { flex:1; line-height:1.35; } .opv-m small { color:var(--sub); }
+  .opv-b { display:flex; gap:4px; flex:none; } .opv-b button { min-height:26px; padding:2px 8px; font-size:11.5px; }
+  .opv-turn { margin-left:18px; background:var(--surface-2) !important; } .opv-turn .opv-f button { min-height:26px; padding:2px 8px; }
   .opsch { list-style:none; margin:0; padding:0; max-height:260px; overflow:auto; border:1px solid var(--line); border-radius:var(--r-s); font-size:12px; }
   .opsch li { padding:3px 6px; border-bottom:1px solid var(--line); }
   .opsch li[data-go] { cursor:pointer; } .opsch li[data-go]:hover { background:var(--surface-2); }
@@ -267,6 +303,7 @@
   .train.sel .casing { stroke:#ffb300; }
   .tlabel { font-size:6.6px; font-weight:700; text-anchor:middle; paint-order:stroke; stroke:var(--halo); stroke-width:2.2; stroke-linejoin:round; pointer-events:none; }
   .nolabel .tlabel { display:none; }
+  .yardu .tlabel { display:none; } .yardu.sel .tlabel { display:inline; }   /* 車庫の線の車両はラベルなし(選んだときだけ) */
   /* ダークでは暗い種別色を明るく読み替える(普通・スカイライナー・ウィング・ライナー) */
   :root:not([data-theme="light"]) .train .body[stroke="#3b3f46"] { stroke:#c4cad3; }
   :root:not([data-theme="light"]) .tlabel[fill="#3b3f46"] { fill:#c4cad3; }
@@ -391,6 +428,7 @@
   <div class="tools">
     <label class="tgl" title="列車ラベルの表示"><input id="labels" type="checkbox" checked> ラベル</label>
     <button id="theme" class="ghost icon" aria-label="ライト/ダークの切り替え" title="ライト/ダークの切り替え"></button>
+    <button id="opsdockbtn" title="運用の編集を開く・閉じる">運用の編集</button>
     <details class="menu" id="setmenu">
       <summary title="運行の設定"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>運行の設定</summary>
       <div class="pop">
@@ -454,22 +492,8 @@
       <summary>運用の編集</summary>
       <div class="inline"><input id="cloudkey" type="password" placeholder="編集キー" autocomplete="off"><button id="cloudkeyset">キーを使う</button></div>
       <p id="cloudmsg" class="hint"></p>
-      <p id="opsstat" class="hint"></p>
-      <label class="row"><span>駅</span><select id="opsst"></select></label>
-      <div class="btns"><button id="occopen" title="駅の線ごとに、どの列車がいつ使っているかを帯で出します">番線使用図</button></div>
-      <ul id="opsvan" class="opsl"></ul>
-      <div class="btns"><button id="opslink" class="primary" disabled>消える1本と現れる1本を選んでつなぐ</button></div>
-      <div class="btns"><button id="opsprop">この駅の案を作る</button><button id="opspropall">全駅の案を作る</button><button id="opspropdel">案を消す</button></div>
-      <p id="opspmsg" class="hint"></p>
-      <h3 class="opsh">回送(駅・通過/停車・時刻・番線)</h3>
-      <div id="dhed"></div>
-      <h3 class="opsh">編集の一覧</h3>
-      <ul id="opsedits" class="opse"></ul>
-      <div id="opsmsg"></div>
-      <div class="btns"><button id="opsapply" class="primary">反映(計算し直す)</button></div>
-      <div class="btns"><button id="opsexp">書き出す</button><button id="opsimp">読み込む</button><button id="opsclr" class="danger">ブラウザの編集を消す</button></div>
-      <input id="opsfile" type="file" accept=".json,application/json" hidden>
-      <p class="hint">時刻表の時刻は変えません。駅を選ぶと、その駅で消える列車(消)・現れる列車(現)と、夜間留置・入出庫で片づいた列車(終・始)が時刻順に出ます。消と現を1本ずつ押して「つなぐ」、または「開く」でその列車の運用の設定(前・次の運用、番線、折り返しの引上線と時刻、1日の始まり・終わり、通過待ち)を開きます。「案を作る」は、同じ駅の同じ所属の列車を着いた順につなぎ、残りを入出庫・夜間留置にする下書きです。ぶつかった編集には原因の列車が出るので、その列車を開くか空いている番線へ移します。</p>
+      <div class="btns"><button id="opsdockopen" class="primary">編集画面を開く</button></div>
+      <p class="hint">編集は画面の下に広げて行います(上のバーの「運用の編集」でも開閉)。</p>
     </details>
     <details class="card" id="addcard" open>
       <summary>列車を投入(手動)</summary>
@@ -488,7 +512,28 @@
     </details>
   </aside>
 </main>
-<div id="occ" hidden><div class="occbar"><b>番線使用図</b><select id="occst" aria-label="駅"></select><button id="occstn" title="選んでいる列車の次の停車駅へ">列車の次の駅</button><button id="occprev" aria-label="前の時間">◀</button><select id="occw" aria-label="表示する幅"><option value="3600">1時間</option><option value="7200">2時間</option><option value="14400">4時間</option><option value="79200">終日</option></select><button id="occnext" aria-label="後の時間">▶</button><button id="occnow">今の時刻</button><span id="occinfo" class="hint"></span><button id="occclose">閉じる</button></div><div id="occbody"></div><p class="hint occhint">帯 = その線を押さえている時間(停車・折り返し・留置)。赤 = 同じ線を同時に使っている(縦列やぶつかり)、点線 = 回送、黄色の枠 = 選んでいる列車。帯を押すとその列車の運用の設定を開きます。</p></div>
+<section id="opsdock" hidden>
+  <div id="dockgrip" title="ドラッグで高さを変える"></div>
+  <div class="dockbar"><b>運用の編集</b><div class="dtabs"><button id="dtabedit" class="on">編集</button><button id="occopen" title="駅の線ごとに、どの列車がいつ使っているかを帯で出します">番線使用図</button><button id="dtabbulk" title="駅ごとの時間(始発がホームに着く・終着がホームを出る・折り返し)や、列車の番線をまとめて変えます">まとめて</button></div><span id="opsstat" class="hint"></span><span class="dsp"></span><button id="opsapply" class="primary">反映(計算し直す)</button><button id="opsexp">書き出す</button><button id="opsimp">読み込む</button><button id="opsclr" class="danger">ブラウザの編集を消す</button><button id="opsdockclose">閉じる</button><input id="opsfile" type="file" accept=".json,application/json" hidden></div>
+  <div id="dockedit" class="dpane dgrid">
+    <div class="dcol"><h3 class="dh">駅で消える・現れる列車</h3>
+      <label class="row"><span>駅</span><select id="opsst"></select></label>
+      <ul id="opsvan" class="opsl"></ul>
+      <div class="btns"><button id="opslink" class="primary" disabled>消える1本と現れる1本を選んでつなぐ</button></div>
+      <div id="opsdhset"></div>
+      <div class="btns"><button id="opsprop">この駅の案を作る</button><button id="opspropall">全駅の案を作る</button><button id="opspropdel">案を消す</button></div>
+      <p id="opspmsg" class="hint"></p>
+    </div>
+    <div class="dcol"><h3 class="dh">列車の運用</h3><div id="opstrainbox"><p class="hint" id="opstrainhint">地図・一覧・番線使用図で列車を選ぶか、左の「開く」で、その列車の前後の運用・番線・折り返し・切り離し・1日の始まりと終わりをここで直せます。</p></div></div>
+    <div class="dcol"><h3 class="dh">回送(駅・通過/停車・時刻・番線)</h3><div id="dhed"></div></div>
+    <div class="dcol"><h3 class="dh">編集の一覧</h3><ul id="opsedits" class="opse"></ul><div id="opsmsg"></div>
+      <p class="hint">時刻表の時刻は変えません。駅を選ぶと、その駅で消える列車(消)・現れる列車(現)と、夜間留置・入出庫で片づいた列車(終・始)が時刻順に出ます。消と現を1本ずつ押して「つなぐ」、または「開く」でその列車の運用の設定(前・次の運用、番線、折り返しの引上線と時刻、1日の始まり・終わり、通過待ち)を開きます。消・現を選ぶと、車庫・留置線のある駅(宗吾参道など)との回送をセットで足せます(往復してつなぐ・入庫・出庫)。「案を作る」は、同じ駅の同じ所属の列車を着いた順につなぎ、残りを入出庫・夜間留置にする下書きです。ぶつかった編集には原因の列車が出るので、その列車を開くか空いている番線へ移します。</p>
+    </div>
+  </div>
+  <div id="dockbulk" class="dpane" hidden></div>
+  <div id="occ" class="dpane" hidden><div class="occbar"><b>番線使用図</b><select id="occst" aria-label="駅"></select><button id="occstn" title="選んでいる列車の次の停車駅へ">列車の次の駅</button><button id="occprev" aria-label="前の時間">◀</button><select id="occw" aria-label="表示する幅"><option value="3600">1時間</option><option value="7200">2時間</option><option value="14400">4時間</option><option value="79200">終日</option></select><button id="occnext" aria-label="後の時間">▶</button><button id="occnow">今の時刻</button><span id="occinfo" class="hint"></span><button id="occclose">編集へ戻る</button></div><div id="occbody"></div><p class="hint occhint">帯 = その線を押さえている時間(停車・折り返し・留置)。赤 = 同じ線を同時に使っている(縦列やぶつかり)、点線 = 回送、黄色の枠 = 選んでいる列車。帯を押すとその列車の運用の設定を開きます。</p></div>
+</section>
+
 <script>
 const D = /*DATA*/;
 /*CORE*/

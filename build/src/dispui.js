@@ -5,12 +5,15 @@ const D_KMPX = 420, D_YS = 6.6, D_TOP = 44;
 const ASP_COL = { R: ['#ff3b30'], KD: ['#f2f2f2'], YY: ['#ffcc00', '#ffcc00'], Y: ['#ffcc00'], YG: ['#ffcc00', '#2ee66b'], YGF: ['#ffcc00', '#2ee66b'], G: ['#2ee66b'], SH: ['#f2f2f2'] };
 const ASP_NAME = { R: '停止', KD: '誘導', YY: '警戒', Y: '注意', YG: '減速', YGF: '抑速', G: '進行', SH: '入換進行' };
 const dTabs = [];
-DSEC.forEach((sec, si) => sec.tabs.forEach((tb, ti) => dTabs.push({ si, name: tb.name, km0: tb.km[0], km1: tb.km[1] })));
+DSEC.forEach((sec, si) => sec.tabs.forEach((tb, ti) => { const T = { si, name: tb.name, km0: tb.km[0], km1: tb.km[1] }; T.parts = [{ si, km0: T.km0, km1: T.km1, off: 0, dy: 0 }]; for (const q of tb.inc || []) { const s2 = DSEC.findIndex(x => x.id === q.sec); if (s2 >= 0 && s2 !== si) T.parts.push({ si: s2, km0: q.km[0], km1: q.km[1], off: q.off || 0, dy: q.dy || 0 }); } dTabs.push(T); }));   // inc: ほかの区間の一部をはめ込む(区間の計算はそのまま、画面だけ)
+const dPart = (tb, si) => tb.parts.find(p => p.si === si);
+const dInTab = (tb, si, km, tol = 0) => { const p = dPart(tb, si); return !!p && km >= p.km0 - tol && km <= p.km1 + tol; };
 function dTabGeom(tb) {
-  const sec = DSEC[tb.si]; let y0 = Infinity, y1 = -Infinity;
-  for (const e of sec.edges) { const a = E[e].a, b = E[e].b; if (Math.max(dKm[a], dKm[b]) < tb.km0 || Math.min(dKm[a], dKm[b]) > tb.km1) continue; y0 = Math.min(y0, dBy[a], dBy[b]); y1 = Math.max(y1, dBy[a], dBy[b]); }
+  let y0 = Infinity, y1 = -Infinity;
+  for (const P of tb.parts) for (const e of DSEC[P.si].edges) { const a = E[e].a, b = E[e].b; if (Math.max(dKm[a], dKm[b]) < P.km0 || Math.min(dKm[a], dKm[b]) > P.km1) continue; y0 = Math.min(y0, dBy[a] + P.dy, dBy[b] + P.dy); y1 = Math.max(y1, dBy[a] + P.dy, dBy[b] + P.dy); }
   tb.y0 = y0; tb.y1 = y1; tb.W = (tb.km1 - tb.km0) * D_KMPX; tb.H = (y1 - y0) * D_YS + D_TOP + 56;
-  tb.X = km => (km - tb.km0) * D_KMPX; tb.Y = by => (by - y0) * D_YS + D_TOP;
+  tb.X = (km, si) => { const P = si == null ? tb.parts[0] : dPart(tb, si) || tb.parts[0]; return (km + P.off - tb.km0) * D_KMPX; };
+  tb.Y = (by, si) => { const P = si == null ? tb.parts[0] : dPart(tb, si) || tb.parts[0]; return (by + P.dy - y0) * D_YS + D_TOP; };
 }
 dTabs.forEach(dTabGeom);
 const gB = { static: null, lock: null, occ: null, sig: null, lab: null };
@@ -24,32 +27,32 @@ function dBuildBoard() {
   for (let k = Math.ceil(tb.km0 * 2) / 2; k <= tb.km1; k += 0.5) {
     const x = tb.X(k), major = Math.abs(k - Math.round(k)) < 1e-6;
     el('line', { x1: x, y1: tb.H - 30, x2: x, y2: tb.H - (major ? 20 : 25), class: 'bk-tick' }, gB.static);
-    if (major) el('text', { x, y: tb.H - 8, class: 'bk-km' }, gB.static, k.toFixed(1) + 'km');
+    if (major) el('text', { x, y: tb.H - 8, class: 'bk-km' }, gB.static, (sec.sc.kmNeg ? Math.abs(k) : k).toFixed(1) + 'km');   // kmNeg: キロ程の符号を反転して載せた区間(都営浅草線)
   }
   el('line', { x1: tb.X(tb.km0), y1: tb.H - 30, x2: tb.X(tb.km1), y2: tb.H - 30, class: 'bk-tick' }, gB.static);
   // ホームと駅名
-  for (const [nm, info] of sec.stInfo) {
-    if (info.km + info.len / 2000 < tb.km0 || info.km - info.len / 2000 > tb.km1) continue;
-    const s = stByName.get(nm), dy = sec.sc.rows[info.row].dy, x0 = tb.X(info.km - info.len / 2000), x1 = tb.X(info.km + info.len / 2000);
+  for (const P of tb.parts) { const sec = DSEC[P.si]; for (const [nm, info] of sec.stInfo) {
+    if (info.km + info.len / 2000 < P.km0 || info.km - info.len / 2000 > P.km1) continue;
+    const s = stByName.get(nm), dy = sec.sc.rows[info.row].dy, x0 = tb.X(info.km - info.len / 2000, P.si), x1 = tb.X(info.km + info.len / 2000, P.si);
     let top = Infinity;
-    for (const p of s.plats) { const y0 = tb.Y(p[1] + dy), y1 = tb.Y(p[3] + 1 + dy); top = Math.min(top, y0); el('rect', { x: x0, y: y0 + 3, width: x1 - x0, height: Math.max(3, y1 - y0 - 6), class: 'bk-plat' }, gB.static); }
+    for (const p of s.plats) { const y0 = tb.Y(p[1] + dy, P.si), y1 = tb.Y(p[3] + 1 + dy, P.si); top = Math.min(top, y0); el('rect', { x: x0, y: y0 + 3, width: x1 - x0, height: Math.max(3, y1 - y0 - 6), class: 'bk-plat' }, gB.static); }
     el('text', { x: (x0 + x1) / 2, y: 18, class: 'bk-st' }, gB.static, nm);
-    el('text', { x: (x0 + x1) / 2, y: 31, class: 'bk-stkm' }, gB.static, info.km.toFixed(1) + 'km');
-  }
+    el('text', { x: (x0 + x1) / 2, y: 31, class: 'bk-stkm' }, gB.static, (sec.sc.kmNeg ? Math.abs(info.km) : info.km).toFixed(1) + 'km');
+  } }
   // 線路
   let d = '';
-  for (const e of sec.edges) {
+  for (const P of tb.parts) for (const e of DSEC[P.si].edges) {
     const a = E[e].a, b = E[e].b; if (E[e].portal) continue;
-    if (Math.max(dKm[a], dKm[b]) < tb.km0 - 0.05 || Math.min(dKm[a], dKm[b]) > tb.km1 + 0.05) continue;
-    d += `M${tb.X(dKm[a]).toFixed(1)} ${tb.Y(dBy[a]).toFixed(1)}L${tb.X(dKm[b]).toFixed(1)} ${tb.Y(dBy[b]).toFixed(1)}`;
+    if (Math.max(dKm[a], dKm[b]) < P.km0 - 0.05 || Math.min(dKm[a], dKm[b]) > P.km1 + 0.05) continue;
+    d += `M${tb.X(dKm[a], P.si).toFixed(1)} ${tb.Y(dBy[a], P.si).toFixed(1)}L${tb.X(dKm[b], P.si).toFixed(1)} ${tb.Y(dBy[b], P.si).toFixed(1)}`;
   }
   el('path', { d, class: 'bk-track' }, gB.static);
   // 区間の外へつながる所
-  for (const n of sec.bnd) { if (dKm[n] < tb.km0 || dKm[n] > tb.km1) continue; el('circle', { cx: tb.X(dKm[n]), cy: tb.Y(dBy[n]), r: 2.6, class: 'bk-bnd' }, gB.static); }
+  for (const P of tb.parts) for (const n of DSEC[P.si].bnd) { if (dKm[n] < P.km0 || dKm[n] > P.km1) continue; el('circle', { cx: tb.X(dKm[n], P.si), cy: tb.Y(dBy[n], P.si), r: 2.6, class: 'bk-bnd' }, gB.static); }
   // 信号機(同じ場所に複数あるときは縦に並べる)
   { const grp = new Map(); for (const s of SIGS) { const k = s.de + ':' + Math.round(s.u / 4); if (!grp.has(k)) grp.set(k, []); grp.get(k).push(s); } for (const L of grp.values()) dStackLayout(L); }
   for (const s of SIGS) {
-    if (s.sec !== tb.si || s.km < tb.km0 || s.km > tb.km1) continue;
+    if (!dInTab(tb, s.sec, s.km)) continue;
     const g = el('g', { class: 'bk-sig' + (s.kind === '閉塞' ? ' blk' : '') + (s.spec && !s.spec.est ? ' usr' : ' est') + (dEdit && D_SIGWARN.has(s) ? ' warn' : '') }, gB.sig);
     dSigGlyph(s, g, tb);
     if (dEdit && D_SIGWARN.has(s)) { const dir = s.down === false ? -1 : 1; el('text', { x: dir > 0 ? -16 : 16, y: 3.5, class: 'bk-warn' }, g, '!'); }
@@ -58,8 +61,8 @@ function dBuildBoard() {
     g.addEventListener('pointerdown', ev => { if (!dEdit || ev.button !== 0) return; ev.stopPropagation(); dDrag = { s, g, x0: ev.clientX, y0: ev.clientY, moved: false, to: null }; });
   }
   if (dEdit) for (const w of D_LOCWARN) {   // 守られていない分岐
-    if (w.sec !== tb.si || w.km < tb.km0 || w.km > tb.km1) continue;
-    const g = el('g', { class: 'bk-locw', transform: `translate(${tb.X(w.km).toFixed(1)} ${(tb.Y(w.by) + (w.down ? -9 : 9)).toFixed(1)})` }, gB.sig);
+    if (!dInTab(tb, w.sec, w.km)) continue;
+    const g = el('g', { class: 'bk-locw', transform: `translate(${tb.X(w.km, w.sec).toFixed(1)} ${(tb.Y(w.by, w.sec) + (w.down ? -9 : 9)).toFixed(1)})` }, gB.sig);
     el('circle', { r: 5.5 }, g); el('text', { y: 3.5 }, g, '!'); el('title', {}, g, w.msg);
   }
   board.classList.toggle('editing', dEdit);
@@ -117,7 +120,7 @@ function dStackLayout(L) {
 function dSigGlyph(s, g, tb) {
   const up = s.down !== false, sg = up ? -1 : 1, K = D_SIGK, D = dSigParts(s), sx = s.stX || 0, sy = s.stY || 0, arm = s.stArm;
   const NS = { 'vector-effect': 'non-scaling-stroke' };
-  g.setAttribute('transform', `translate(${tb.X(s.km).toFixed(1)} ${(tb.Y(s.by) + sg * 2).toFixed(1)})`);
+  g.setAttribute('transform', `translate(${tb.X(s.km, s.sec).toFixed(1)} ${(tb.Y(s.by, s.sec) + sg * 2).toFixed(1)})`);
   // 腕(横に並べるとき)・柱
   if (arm) { el('line', { x1: 0, y1: 0, x2: 0, y2: sg * arm.h, class: 'bk-post' }, g); el('line', { x1: arm.x0, y1: sg * arm.h, x2: arm.x1, y2: sg * arm.h, class: 'bk-post' }, g); }
   const root = arm ? arm.h + (s.stLift || 0) : sy;
@@ -178,10 +181,11 @@ function dKmAt(t, mm) { const fr = t.dp.spans(mm - 1, mm).pop(); if (!fr) return
 function dPath(t, a, b, tb) {
   let d = '';
   for (const s of t.dp.spans(a, b)) {
-    if (dSecOf[s.e] !== tb.si) continue;
+    const si = dSecOf[s.e], P = dPart(tb, si); if (!P) continue;
     const e = E[s.e], Em = dEm[s.e], f0 = s.lo / Em, f1 = s.hi / Em;
     const km = f => dKm[e.a] + (dKm[e.b] - dKm[e.a]) * f, by = f => dBy[e.a] + (dBy[e.b] - dBy[e.a]) * f;
-    d += `M${tb.X(km(f0)).toFixed(1)} ${tb.Y(by(f0)).toFixed(1)}L${tb.X(km(f1)).toFixed(1)} ${tb.Y(by(f1)).toFixed(1)}`;
+    if (P !== tb.parts[0] && (Math.max(km(f0), km(f1)) < P.km0 - 0.05 || Math.min(km(f0), km(f1)) > P.km1 + 0.05)) continue;   // はめ込んだ部分は、その範囲だけ
+    d += `M${tb.X(km(f0), si).toFixed(1)} ${tb.Y(by(f0), si).toFixed(1)}L${tb.X(km(f1), si).toFixed(1)} ${tb.Y(by(f1), si).toFixed(1)}`;
   }
   return d;
 }
@@ -194,17 +198,17 @@ function dDraw(force) {
   // 確保された進路(緑)
   let dl = '';
   for (const [e, l] of D_LOCK) {
-    if (dSecOf[e] !== tb.si) continue; const ed = E[e], Em = dEm[e];
+    const si = dSecOf[e], P = dPart(tb, si); if (!P) continue; const ed = E[e], Em = dEm[e];
     for (const k of l) { const f0 = k.lo / Em, f1 = k.hi / Em; const km = f => dKm[ed.a] + (dKm[ed.b] - dKm[ed.a]) * f, by = f => dBy[ed.a] + (dBy[ed.b] - dBy[ed.a]) * f;
-      if (Math.max(km(f0), km(f1)) < tb.km0 || Math.min(km(f0), km(f1)) > tb.km1) continue;
-      dl += `M${tb.X(km(f0)).toFixed(1)} ${tb.Y(by(f0)).toFixed(1)}L${tb.X(km(f1)).toFixed(1)} ${tb.Y(by(f1)).toFixed(1)}`; }
+      if (Math.max(km(f0), km(f1)) < P.km0 || Math.min(km(f0), km(f1)) > P.km1) continue;
+      dl += `M${tb.X(km(f0), si).toFixed(1)} ${tb.Y(by(f0), si).toFixed(1)}L${tb.X(km(f1), si).toFixed(1)} ${tb.Y(by(f1), si).toFixed(1)}`; }
   }
   el('path', { d: dl, class: 'bk-lock' }, gB.lock);
   let dOcc = '';   // 在線: 列車のいる閉塞(前後の信号機の間)の線路を赤く
   // 列車(実際の長さ)とラベル
   const labs = [];
   for (const t of ttActive || []) {
-    if (!t.route || !t.g) continue; const dp = dPrep(t); if (!dp.ranges.some(r => r.sec === tb.si)) continue;
+    if (!t.route || !t.g) continue; const dp = dPrep(t); if (!dp.ranges.some(r => tb.parts.some(P => r.secs ? r.secs.has(P.si) : r.sec === P.si))) continue;
     const m = t.ph ? t.ph.m : dp.s2m(t.s), L = t.ph ? t.ph.L : dLen(t);
     const d = dPath(t, m - L / 2, m + L / 2, tb); if (!d) continue;
     const ty = TYPES[t.shown || t.type];
@@ -221,9 +225,9 @@ function dDraw(force) {
     // ラベルは先頭の位置に
     const fr = dp.spans(m + L / 2 - 1, m + L / 2).pop(); if (!fr) continue;
     const e = E[fr.e], f = (fr.lo + fr.hi) / 2 / dEm[fr.e], km = dKm[e.a] + (dKm[e.b] - dKm[e.a]) * f, by = dBy[e.a] + (dBy[e.b] - dBy[e.a]) * f;
-    if (km < tb.km0 - 0.2 || km > tb.km1 + 0.2) continue;
+    if (!dInTab(tb, dSecOf[fr.e], km, 0.2)) continue;
     const g0 = t.route.segs[fr.i], right = (g0.t1 > g0.t0) === (dKm[e.b] > dKm[e.a]);
-    labs.push({ t, x: tb.X(km), y: tb.Y(by), right, ty });
+    labs.push({ t, x: tb.X(km, dSecOf[fr.e]), y: tb.Y(by, dSecOf[fr.e]), right, ty });
   }
   if (dOcc) el('path', { d: dOcc, class: 'bk-occb' }, gB.lock);
   // ラベルの重なりを上下にずらす
@@ -296,7 +300,7 @@ function dPanel() {
       `<p class="dp-sub">灯: ${s.spec && SIG_HEADS[s.spec.h] ? SIG_HEADS[s.spec.h].name : '指定なし'}${s.spec && s.spec.noG ? '・進行なし' : ''}(${dHeadText(s.spec)})</p>` +
       `<div class="btns"><button id="dpman">${s.man ? '停止の指示を解除' : '停止を指示する'}</button></div>`;
   } else if (dEdit) {
-    const si = dTabs[dTab].si, ws = SIGS.filter(x => x.sec === si && D_SIGWARN.has(x)).sort((a, b) => a.km - b.km), lw = D_LOCWARN.filter(w => w.sec === si).sort((a, b) => a.km - b.km);
+    const tb = dTabs[dTab], ws = SIGS.filter(x => dInTab(tb, x.sec, x.km) && D_SIGWARN.has(x)).sort((a, b) => a.km - b.km), lw = D_LOCWARN.filter(w => dInTab(tb, w.sec, w.km)).sort((a, b) => a.km - b.km);
     h += `<div class="dp-title">置き方の確かめ</div><p class="dp-sub">規定の目安から外れている信号機 ${ws.length}基・守られていない分岐 ${lw.length}か所(図の ! 印)</p>` +
       `<ul class="se-warn">${(() => { const G = []; for (const x of ws) { const k = x.km.toFixed(3) + x.name + D_SIGWARN.get(x).join(); const g = G.find(q => q.k === k); if (g) g.n++; else G.push({ k, x, n: 1 }); } return G; })().slice(0, 60).map(({ x, n }) => `<li data-wi="${SIGS.indexOf(x)}" style="cursor:pointer"><b>${x.km.toFixed(3)}km ${x.name}${n > 1 ? `(並んだ線に ${n}基)` : ''}</b>: ${D_SIGWARN.get(x).join(' / ')}</li>`).join('')}${lw.slice(0, 30).map(w => `<li>${w.msg}</li>`).join('')}</ul>`;
     h += `<p class="dp-sub">信号機の編集中: 線路をクリックすると、上の「置く種類」「向き」の信号機を置きます。信号機をクリックすると種類・向き・位置を直せます(ドラッグで移動、Delete キーで削除)。変えるとすぐに運転に反映され、このブラウザに保存されます。</p>`;
@@ -364,12 +368,13 @@ function dSigMoveBy(s, dm) { const sp = dSpecFor(s), p = dShift(s.de, s.u, dm), 
 function dSigDelete(s) { const L = dSecList(s.sec), i = L.indexOf(dSpecFor(s)); if (i >= 0) L.splice(i, 1); dSigApply(null); }
 // 画面の点 → いちばん近い線路(向き dn に走れるもの)
 function dPick(ev, dn) {
-  const tb = dTabs[dTab], sec = DSEC[tb.si], pt = board.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+  const tb = dTabs[dTab], pt = board.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
   const q = pt.matrixTransform(board.getScreenCTM().inverse());
   let best = null, bd = 14;
-  for (const e of sec.edges) {
+  for (const P of tb.parts) for (const e of DSEC[P.si].edges) {
     if (E[e].portal) continue; let d = -1; for (const x of [0, 1]) if (dAllowed(e, x) && dDn(e * 2 + x) === dn) d = x; if (d < 0) continue;
-    const a = E[e].a, b = E[e].b, ax = tb.X(dKm[a]), ay = tb.Y(dBy[a]), dx = tb.X(dKm[b]) - ax, dy = tb.Y(dBy[b]) - ay, L2 = dx * dx + dy * dy; if (L2 < 1e-6) continue;
+    const a = E[e].a, b = E[e].b; if (Math.max(dKm[a], dKm[b]) < P.km0 - 0.05 || Math.min(dKm[a], dKm[b]) > P.km1 + 0.05) continue;
+    const ax = tb.X(dKm[a], P.si), ay = tb.Y(dBy[a], P.si), dx = tb.X(dKm[b], P.si) - ax, dy = tb.Y(dBy[b], P.si) - ay, L2 = dx * dx + dy * dy; if (L2 < 1e-6) continue;
     const f = Math.max(0, Math.min(1, ((q.x - ax) * dx + (q.y - ay) * dy) / L2)), dd = Math.hypot(ax + dx * f - q.x, ay + dy * f - q.y);
     if (dd < bd) { bd = dd; best = { de: e * 2 + d, u: (d ? 1 - f : f) * dEm[e] }; }
   }
@@ -380,9 +385,9 @@ board.addEventListener('click', ev => {
   if (dEdit) {
     const p = dPick(ev, dEdDn); if (!p) { dSigMsg('近くに' + (dEdDn ? '下り' : '上り') + '方向に走れる線路がありません'); return; }
     // すでにある信号機の近く(同じ線・同じ向きで8m以内)なら、同じ位置に重ねて置く(進路ごとに並べる信号機)
-    const near = SIGS.filter(x => x.sec === dTabs[dTab].si && x.de === p.de && Math.abs(x.u - p.u) < 8).sort((a, b) => Math.abs(a.u - p.u) - Math.abs(b.u - p.u))[0];
+    const near = SIGS.filter(x => x.sec === dSecOf[p.de >> 1] && x.de === p.de && Math.abs(x.u - p.u) < 8).sort((a, b) => Math.abs(a.u - p.u) - Math.abs(b.u - p.u))[0];
     const sp = near && near.spec ? Object.assign(dSpecAt(p.de, near.u, dEdKind), { km: near.spec.km, y: near.spec.y, dn: near.spec.dn }) : dSpecAt(p.de, near ? near.u : p.u, dEdKind);
-    if (dEdHead && dEdKind !== '入換' && dEdKind !== '中継') sp.h = dEdHead; dSecList(dTabs[dTab].si).push(sp); dSigMsg(near ? near.name + ' と同じ位置に置きました(進路を選ぶと進路ごとの信号機になります)' : ''); dSigApply(sp); return;
+    if (dEdHead && dEdKind !== '入換' && dEdKind !== '中継') sp.h = dEdHead; dSecList(dSecOf[p.de >> 1]).push(sp); dSigMsg(near ? near.name + ' と同じ位置に置きました(進路を選ぶと進路ごとの信号機になります)' : ''); dSigApply(sp); return;
   }
   dSel = null; dSelSig = null; dDraw(true);
 });
@@ -391,7 +396,7 @@ board.addEventListener('pointermove', ev => {
   if (!d.moved && Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0) < 4) return;
   d.moved = true; const p = dPick(ev, dDn(d.s.de)); if (!p) return;
   d.to = p; const P = dPosOf(p.de, p.u), tb = dTabs[dTab], up = d.s.down !== false;
-  d.g.setAttribute('transform', `translate(${tb.X(P.km).toFixed(1)} ${(tb.Y(P.by) + (up ? -10 : 10)).toFixed(1)})`);
+  d.g.setAttribute('transform', `translate(${tb.X(P.km, dSecOf[p.de >> 1]).toFixed(1)} ${(tb.Y(P.by, dSecOf[p.de >> 1]) + (up ? -10 : 10)).toFixed(1)})`);
 });
 window.addEventListener('pointerup', () => {
   const d = dDrag; dDrag = null; if (!d || !d.moved) return;

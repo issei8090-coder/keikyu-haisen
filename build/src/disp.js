@@ -450,8 +450,11 @@ function dPrep(t) {
   for (let i = 0; i < n; i++) { M[i] = m; m += Math.abs(segs[i].t1 - segs[i].t0) * dEm[segs[i].e]; }
   M[n] = m;
   const ranges = []; let cur = null;
-  for (let i = 0; i < n; i++) { const g = segs[i], ins = dSecOf[g.e] >= 0; if (ins && !cur) { cur = { i0: i, m0: M[i], sec: dSecOf[g.e] }; ranges.push(cur); } if (!ins && cur) { cur.i1 = i; cur.m1 = M[i]; cur = null; } }
+  // 区間どうしが「※」のつなぎ(長さ0)だけで続くところ(泉岳寺 ⇔ 都営浅草線の区間など)は、1つの続いた範囲にする。分けると、次の区間の入口の待ち合わせ(dEntryHold)を通らずに走り出し、前の列車のいる閉塞に入ってしまう
+  const inSec = i => { if (dSecOf[segs[i].e] >= 0) return true; if (!E[segs[i].e].portal) return false; let a = i - 1, b = i + 1; while (a >= 0 && E[segs[a].e].portal) a--; while (b < n && E[segs[b].e].portal) b++; return a >= 0 && b < n && dSecOf[segs[a].e] >= 0 && dSecOf[segs[b].e] >= 0; };
+  for (let i = 0; i < n; i++) { const g = segs[i], ins = inSec(i); if (ins && !cur) { cur = { i0: i, m0: M[i], sec: dSecOf[g.e] }; ranges.push(cur); } if (!ins && cur) { cur.i1 = i; cur.m1 = M[i]; cur = null; } }
   if (cur) { cur.i1 = n; cur.m1 = M[n]; }
+  for (const r of ranges) { r.secs = new Set(); for (let i = r.i0; i < r.i1; i++) if (dSecOf[segs[i].e] >= 0) r.secs.add(dSecOf[segs[i].e]); }   // 範囲が通る区間
   const sig = [];
   for (let i = 0; i < n; i++) {
     const g = segs[i]; if (dSecOf[g.e] < 0) continue;
@@ -473,9 +476,9 @@ function dPrep(t) {
   }
   // 線区の最高速度(キロ程で指定)
   for (const rg of ranges) {
-    const vm = DSEC[rg.sec].vmax || [];
     for (let i = rg.i0; i < rg.i1; i++) {
-      const g = segs[i], e = E[g.e]; if (e.portal) continue;
+      const g = segs[i], e = E[g.e]; if (e.portal || dSecOf[g.e] < 0) continue;
+      const vm = DSEC[dSecOf[g.e]].vmax || [];   // 区間をまたぐ範囲もあるので、線ごとにその区間の最高速度
       const kA = dKm[e.a] + (dKm[e.b] - dKm[e.a]) * g.t0, kB = dKm[e.a] + (dKm[e.b] - dKm[e.a]) * g.t1;
       for (const [k0, k1, v] of vm) {
         const lo = Math.max(Math.min(kA, kB), k0), hi = Math.min(Math.max(kA, kB), k1); if (hi <= lo) continue;
@@ -509,7 +512,7 @@ const dSegEndN = g => (g.d ? g.t1 <= 1e-6 : g.t1 >= 1 - 1e-6) ? (g.d ? E[g.e].a 
 // 区間(ブロック) j: 経路上の信号機 j から j+1 まで(j = -1 は区間の入口から最初の信号機まで)
 function dBlock(t, j, rg) {
   const dp = t.dp; let b = j < 0 ? dp.ranges[-1 - j].blk : dp.blocks[j]; if (b) return b;
-  if (j < 0) rg = dp.ranges[-1 - j];
+  if (j < 0) rg = dp.ranges[-1 - j]; else { const m0 = dp.sig[j].m, r2 = dp.ranges.find(r => m0 >= r.m0 - 0.01 && m0 < r.m1); if (r2) rg = r2; }   // 信号機が入っている範囲で作る(別の範囲を渡されて終わりが手前の空のブロックが残り、押さえたつもりで先を取っていた 781K/725N 2026-11-04)
   let a = j < 0 ? rg.m0 : dp.sig[j].m;
   let z = rg.m1; for (let k = Math.max(0, j + 1); k < dp.sig.length; k++) if (dp.sig[k].m > a + 0.01) { z = Math.min(z, dp.sig[k].m); break; }   // 区間に2回目以降に入る所(j<-1)でも、先の信号機を最初から探す
   if (j < 0) { const i0 = rg.i0; let k = i0 - 1; while (k >= 0 && D_BI.has(t.route.segs[k].e)) k--; a = dp.M[k + 1]; }
@@ -616,7 +619,7 @@ function dEntOrder(t, b) {
   let lo = 0, hi = D_ENTQ.length; while (lo < hi) { const k = (lo + hi) >> 1; if (D_ENTQ[k].T < D_NOW - D_SWAP) lo = k + 1; else hi = k; }
   for (let i = lo; i < D_ENTQ.length; i++) {
     const c = D_ENTQ[i]; if (c.T > tE + D_SWAP) break;
-    const o = c.o; if (o === t || dPartner(o, t) || o.ph || o.sv == null || !o.route || o.unit || o.cut) continue;   // 区間の外に見えている列車だけ
+    const o = c.o; if (o === t || dPartner(o, t) || o.ph || o.sv == null || !o.route || o.unit || o.cut || o.yard) continue;   // 区間の外に見えている列車だけ
     const dpo = dPrep(o), rg = dpo.ranges[c.ri]; if (!rg || dpo.s2m(o.s) >= rg.m0) continue;
     const eta = D_NOW + Math.max(0, dKnT(o, c.d) - dKnT(o, o.s)); if (eta > tE - 30 || eta > D_NOW + D_SWAP) continue;
     if (o.dLocks && o.dLocks.has(-1 - c.ri)) continue;
@@ -920,7 +923,7 @@ function dispStep1(act, T, lastT) {
     const Tk = lastT + h * k;
     dBuildOcc(act);
     for (const t of act) {
-      if (!t.route || t.unit || t.cut) continue;
+      if (!t.route || t.unit || t.cut || t.yard) continue;
       const dp = dPrep(t);
       if (!dp.ranges.length) continue;
       const m = t.ph ? t.ph.m : dp.s2m(t.s);
@@ -1032,7 +1035,7 @@ let D_LOG = null;   // 検査用: 着いた・区間を出た記録
 // 区間の外にいる列車も、時刻表の終わりを過ぎても経路の終わりまで走りきってから消す(区間の入口で待たされて遅れた 853D・821H が入口の前で消えていた。区間の外だけを走る列車も、前につかえて終点の少し手前で消えていた 2026-11-01)
 const dThru = t => !!t.route && (t.dIn != null ? t.dIn : (t.dIn = t.route.segs.some(g => dSecOf[g.e] >= 0)));
 // まだ走っている(区間の中で物理運転中・時刻表の終わりを過ぎて走りきる途中・区間の外で経路の終わりにまだ着いていない・前の運用を待っていてまだ出ていない)
-const dLive = (o, T) => !!o && ((o.ph && !o.ph.done) || o.dOver || (!o.ph && o.sv != null && !o.unit && !o.cut && o.s < o.route.total - 0.5) || (o.dHeld && o.sv == null && T <= o.end));
+const dLive = (o, T) => !!o && ((o.ph && !o.ph.done) || o.dOver || (!o.ph && o.sv != null && !o.unit && !o.cut && !o.yard && o.s < o.route.total - 0.5) || (o.dHeld && o.sv == null && T <= o.end));
 function dispTarget(t, T) {
   if (dispOn && !t.ph && t.sv == null && t.prev && dLive(t.prev, T) && T >= t.start && T < t.start + 3600) { if (T < t.end) t.dHeld = true; t.dOver = false; return false; }   // 同じ車両の前の運用が終わるまで次を出さない
   if (ttTarget(t, T)) {
@@ -1045,7 +1048,7 @@ function dispTarget(t, T) {
   t.dOver = false; return false;
 }
 function dSpawnBlocked(t) {
-  if (!t.route || t.unit || t.cut) return false;
+  if (!t.route || t.unit || t.cut || t.yard) return false;
   const dp = dPrep(t), m = dp.s2m(t.dHeld && !t.dHeldMid && t.sd ? t.sd[0] : t.tgt != null ? t.tgt : t.s), L = dLen(t);
   const pr = t.prev, pg = pr && pr.route && pr.route.segs[pr.route.segs.length - 1], ho = !!(pg && t.route.segs[0] && pg.e === t.route.segs[0].e && m < t.route.segs[0].d1 + L);   // 同じ車両が着いた線から折り返して出る(受け渡し): 進路はその車両がいるのを承知で(誘導などで)取られているので、進路は見ない   // 現れる位置(時刻表の位置 tgt)。t.s は前に出ていたときの位置のまま(初めは 0 = 始発駅)なので、途中から始めたとき別の場所を見て待たせていた
   for (const sp of dp.spans(m - L / 2 - 5, m + L / 2 + 5)) { if (dSecOf[sp.e] < 0) continue; for (const o of D_OCC.get(sp.e) || []) if (o.t !== t && o.t !== t.prev && !dPartner(o.t, t) && o.lo <= sp.hi && sp.lo <= o.hi) return true; if (!ho) for (const k of D_LOCK.get(sp.e) || []) if (k.t !== t && k.t !== t.prev && !dPartner(k.t, t) && k.lo <= sp.hi && sp.lo <= k.hi) return true; }   // ほかの列車が進路を取っている区間にも出さない。同じ車両の前の運用(折り返す前の列車)はふさいでいるとみなさない(消してから出すまでに1コマ空くと、そのすきに別の列車が進路を取り、何分も出られなかった)
@@ -1081,9 +1084,9 @@ const D_PLAT = new Map();   // 番線 → [[列車, 停車の番号]](区間の�
 function dRetime(list) {
   const st = { trains: 0, moved: 0, late: 0, maxShift: 0 };
   D_PLAT.clear();
-  for (const o of list) { if (!o.route || !o.route.stopE || o.unit || o.cut || !o.P) continue; o.names.forEach((nm, i) => { const e = o.route.stopE[i]; if (e == null || dSecOf[e] < 0 || (o.ev[i] && o.ev[i].thru)) return; if (!D_PLAT.has(e)) D_PLAT.set(e, []); D_PLAT.get(e).push([o, i + o.k0]); }); }
+  for (const o of list) { if (!o.route || !o.route.stopE || o.unit || o.cut || o.yard || !o.P) continue; o.names.forEach((nm, i) => { const e = o.route.stopE[i]; if (e == null || dSecOf[e] < 0 || (o.ev[i] && o.ev[i].thru)) return; if (!D_PLAT.has(e)) D_PLAT.set(e, []); D_PLAT.get(e).push([o, i + o.k0]); }); }
   for (const t of list) {
-    if (!t.route || t.unit || t.cut || !t.A || !t.P) continue;
+    if (!t.route || t.unit || t.cut || t.yard || !t.A || !t.P) continue;
     if (!t.route.segs.some(g => dSecOf[g.e] >= 0)) continue;
     if (!t.sd) ttTarget(t, t.start); if (!t.sd) continue;
     t.dp = null; const dp = dPrep(t), L = dLen(t);
@@ -1148,7 +1151,7 @@ function dBuildPred() {
 const D_SPAWNQ = new Map();
 function dSpawnQ(list) {
   D_SPAWNQ.clear();
-  for (const t of list) { if (t.prev || !t.route || t.unit || t.cut || !t.sd) continue; const dp = dPrep(t), m = dp.s2m(t.sd[0]), L = dLen(t);
+  for (const t of list) { if (t.prev || !t.route || t.unit || t.cut || t.yard || !t.sd) continue; const dp = dPrep(t), m = dp.s2m(t.sd[0]), L = dLen(t);
     for (const sp of dp.spans(m - L / 2 - 5, m + L / 2 + 5)) { if (dSecOf[sp.e] < 0) continue; if (!D_SPAWNQ.has(sp.e)) D_SPAWNQ.set(sp.e, []); D_SPAWNQ.get(sp.e).push({ t, lo: sp.lo, hi: sp.hi }); } }
 }
 function dispPlan(list) {
@@ -1165,7 +1168,7 @@ function dispPlan(list) {
           for (let k = i + step; k >= 0 && k < sg.length && dSecOf[sg[k].e] < 0 && px < 50; k += step) { const g = sg[k]; px += Math.abs(g.d1 - g.d0); const v = dir.get(g.e) || 0; dir.set(g.e, v | (g.d ? 2 : 1)); } } } }
     for (const [e, v] of dir) if (v === 3) D_BI.add(e); }
   for (const o of list) {
-    if (!o.route || o.unit || o.cut) continue;
+    if (!o.route || o.unit || o.cut || o.yard) continue;
     if (!o.kn) ttTarget(o, o.start); if (!o.kn) continue;
     const ks = new Set(), seen = new Map();
     for (const g of o.route.segs) { if (dSecOf[g.e] < 0 || E[g.e].portal) continue; ks.add(g.e * 2 + g.d); const si = edgeStation[g.e]; if (si < 0) continue; if (!seen.has(si)) seen.set(si, { sX: (g.d0 + g.d1) / 2, sX1: g.d1, es: new Set() }); seen.get(si).es.add(g.e); seen.get(si).sX1 = g.d1; }
@@ -1210,7 +1213,7 @@ function dispPlan(list) {
   // 分岐ごとに、通る列車とその時刻(時刻表)。進路を時刻表の順に作るのに使う
   D_NODEQ.clear();
   for (const o of list) {
-    if (!o.route || !o.kn || o.unit || o.cut) continue;
+    if (!o.route || !o.kn || o.unit || o.cut || o.yard) continue;
     for (const g of o.route.segs) {
       if (dSecOf[g.e] < 0 || E[g.e].portal) continue; const nd = dSegEndN(g); if (nd < 0 || adj[nd].length < 3) continue;
       const T = dKnT(o, g.d1); if (isNaN(T)) continue;
@@ -1220,7 +1223,7 @@ function dispPlan(list) {
   for (const [, q] of D_NODEQ) q.sort((a, b) => a.T - b.T);
   D_ENTQ.length = 0;   // 区間の外から入ってくる所と時刻
   for (const o of list) {
-    if (!o.route || !o.kn || o.unit || o.cut) continue;
+    if (!o.route || !o.kn || o.unit || o.cut || o.yard) continue;
     const segs = o.route.segs; let ri = 0;
     for (let i = 0; i < segs.length; i++) { if (dSecOf[segs[i].e] < 0 || (i > 0 && dSecOf[segs[i - 1].e] >= 0)) continue; if (i > 0) { const T = dKnT(o, segs[i].d0); if (!isNaN(T)) D_ENTQ.push({ o, ri, d: segs[i].d0, T }); } ri++; }
   }

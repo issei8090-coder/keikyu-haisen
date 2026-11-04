@@ -4,6 +4,13 @@ const TURN_MAX = 20;      // 途中駅で折り返し待ちとみなす最大時
 const TERMINI = new Set(['羽田空港第1・第2ターミナル', '浦賀', '三崎口', '逗子・葉山', '小島新田', '西馬込', '京成上野', '成田空港', '芝山千代田']);   // 行き止まりの終着駅
 const FAST = new Set(['kaitoku', 'tokkyu', 'apkaitoku', 'wing', 'access', 'tsukin', 'liner']);
 const TANDEM = 15;
+// 駅ごとの設定(運用の編集「まとめて」): USER_OPS.stn = { _all: {in, out, turn}, 駅名: {...} }(分)。空欄の駅は _all、_all も空欄ならいつもの値
+//  in = 始発の列車がホームに着いている(発車の何分前)、out = 終着の列車がホームを出る(着いて何分後。引上線・車庫へ入る列車も)、turn = 折り返しの最短(分)
+function ttStn(st, k) {
+  const S = typeof USER_OPS !== 'undefined' && USER_OPS && USER_OPS.stn; if (!S) return null;
+  const g = o => o && o[k] != null && o[k] !== '' && !isNaN(+o[k]) ? +o[k] : null;
+  const v = g(S[st]); return v != null ? v : g(S._all);
+}
 const PLAT_GAP = 40;     // 同じ番線で、前の列車が出てから次が着くまでなるべく空ける秒(空けられる番線が無ければ5秒)        // 同じ線に2本入るとき(縦列停車)の間隔
 const SIDING_MIN = 5;     // 折り返しがこの分数以上なら、いったん引上線へ上げる
 const MAINL = '泉岳寺 品川 北品川 新馬場 青物横丁 鮫洲 立会川 大森海岸 平和島 大森町 梅屋敷 京急蒲田 雑色 六郷土手 京急川崎 八丁畷 鶴見市場 京急鶴見 花月総持寺 生麦 京急新子安 子安 神奈川新町 京急東神奈川 神奈川 横浜 戸部 日ノ出町 黄金町 南太田 井土ヶ谷 弘明寺 上大岡 屏風浦 杉田 京急富岡 能見台 金沢文庫 金沢八景 追浜 京急田浦 安針塚 逸見 汐入 横須賀中央 県立大学 堀ノ内 京急大津 馬堀海岸 浦賀'.split(' ');
@@ -26,14 +33,15 @@ function ttSchedule(t) {
   ev.forEach((e, i) => {
     const single = e.arr === e.dep;
     // 時刻表は分単位。同じ分の「発車」と「到着」がぶつからないよう、発車は分の頭、到着は分の後半とみなす
-    let a = i === 0 ? e.dep * 60 - 25 : (single ? e.dep * 60 + 20 : e.arr * 60 + 25);   // 1分の中で止まる駅は15秒ほど(京急の停車は短い)
+    const sIn = i === 0 ? ttStn(e.name, 'in') : null;
+    let a = i === 0 ? e.dep * 60 - (sIn != null ? Math.max(10, sIn * 60) : 25) : (single ? e.dep * 60 + 20 : e.arr * 60 + 25);   // 1分の中で止まる駅は15秒ほど(京急の停車は短い)
     let d = i === 0 ? e.dep * 60 + 5 : e.dep * 60 + (single ? 35 : 5);
     if (e.as != null) { a = e.as; d = e.ds; }
     if (i === n - 1 && !t.exitEnd && e.as == null) a = e.arr * 60 + 30;
     if (i > 0 && e.early != null && e.as == null) a = Math.min(a, P[i - 1] + e.early);   // 時刻表に発車時刻しか無い駅: 前の駅からふつうに走って着き、発車まで止まっている
     if (i > 0) a = Math.max(a, P[i - 1] + 20);
     d = e.thru ? a : Math.max(d, a + 10);
-    if (i === n - 1) d = a + 25;
+    if (i === n - 1) { const sOut = ttStn(e.name, 'out'); d = a + (sOut != null ? Math.max(10, sOut * 60) : 25); }
     A.push(a); P.push(d);
   });
   if (t.exitStart) { A.unshift(A[0] - 20); P.unshift(A[0]); t.k0 = 1; }
@@ -456,7 +464,7 @@ function ttShape(t, T) {
   if (t.cpl && t.cpl.t0 != null) { if (T >= t.cpl.t0 && T < t.cpl.t1) { if (t.cpl.side === 'rear') b = COUPLE_LEN; else f = COUPLE_LEN; } }
   else if (t.cars === 12) {
     if (t.c12 === undefined) { const i = t.names.indexOf(COUPLE_ST); t.c12 = i > 0 && i < t.names.length - 1 ? t.P[i + t.k0] : Infinity; }
-    if (T < t.c12) b = COUPLE_LEN;
+    if (T < t.c12) { if (t.c12side === 'front') f = COUPLE_LEN; else b = COUPLE_LEN; }
   }
   t.extB = b; t.extF = f;
 }
@@ -479,8 +487,33 @@ const ttUKey = t => (t.no || '') + '@' + (t.names ? t.names[0] : t.ev[0].name) +
 //  fin:   {mode:'plat'|'sd', sd, lv} 1日の終わり(次の運用なし): ホームで夜間留置 / 留置線・車庫線へ入庫(lv=ホームを出る時刻)して朝まで
 //  begin: {mode:'plat'|'sd', sd, back} 1日の始まり(前の運用なし): ホームで夜間留置 / 留置線・車庫線から出庫(back=ホームに着く時刻)
 //  wait:  {del:[駅名], add:[{st, after, as, ds}]} 時刻表に無い通過待ち(推定)を消す・足す(after=その前に止まる駅、as/ds='HH:MM:SS')
+// ===== 運用の編集の保存を、配線を作り直したあとも使えるようにする =====
+// 保存した番線・引上線の指定は線の番号(エッジ番号)。配線を作り直すと番号が付け直しになるので、保存したときの配線(USER_OPS.geo。無ければいちばん古い表の配線)での
+// 「駅の何本目の線・何本目の引上線か」の表(GEO_HIST = build/geo_hist.json、tools/geo_hist.js で作る)を使って、いまの配線の線に置き換える
+const GEO_HIST = /*GEOHIST*/null;
+function ttGeoSig() { let h = 0; for (const e of D.edges) h = (h * 31 + e[0] * 7 + e[1]) % 1000000007; return D.nodes.length + '/' + D.edges.length + '/' + h; }
+function ttTrackList(st) { const s = stByName.get(st); if (!s) return []; return [...new Set(s.stops.map(([e]) => e))].sort((a, b) => (N[E[a].a].y + N[E[a].b].y) - (N[E[b].a].y + N[E[b].b].y) || N[E[a].a].x - N[E[b].a].x); }
+function ttSdList(st) { return (SIDINGS.get(st) || []).slice().sort((a, b) => N[a.node].y - N[b.node].y || N[a.node].x - N[b.node].x).map(x => x.e); }
+function ttGeoMigrate(U) {
+  if (!U || typeof U !== 'object') return false;
+  const cur = ttGeoSig();
+  if (!GEO_HIST || !GEO_HIST.length) { if (!U.geo) U.geo = cur; return false; }
+  const from = U.geo || GEO_HIST[0].sig;
+  if (from === cur) { U.geo = cur; return false; }
+  const H = GEO_HIST.find(h => h.sig === from); if (!H) { U.geo = cur; return false; }   // 表に無い配線の保存はそのまま
+  let n = 0;
+  const mapE = v => { if (v == null || v === '' || isNaN(+v)) return v; const r = H.map[+v]; if (!r) return v; const l = r[1] === 's' ? ttSdList(r[0]) : ttTrackList(r[0]); if (!l.length) return v; n++; return l[Math.min(r[2], l.length - 1)]; };
+  const walk = o => { if (!o || typeof o !== 'object') return; if (Array.isArray(o)) { o.forEach(walk); return; }
+    for (const k of Object.keys(o)) { const v = o[k];
+      if (k === 'sd') o[k] = mapE(v);
+      else if (k === 'plat') { if (v && typeof v === 'object') { for (const q of Object.keys(v)) v[q] = mapE(v[q]); } else o[k] = mapE(v); }
+      else walk(v); } };
+  for (const d of Object.keys(U)) if (d !== 'stn' && U[d] && typeof U[d] === 'object') walk(U[d]);
+  U.geo = cur; U.geoMoved = n; return true;
+}
 function ttUserOps(list) {
   const day = list.day || (typeof ttDay !== 'undefined' ? ttDay : '');
+  if (typeof USER_OPS !== 'undefined' && USER_OPS) ttGeoMigrate(USER_OPS);   // 配線を作り直す前の保存なら、いまの線に置き換える
   const U = typeof USER_OPS !== 'undefined' && USER_OPS ? USER_OPS[day] : null;
   list.userMsg = [];
   if (!U) return;
@@ -512,6 +545,7 @@ function ttUserOps(list) {
     if (i < 0) { msg(`回送 ${x.no}(${x.from} ${x.dep || ''}発)が見つからないので消せません`); continue; }
     const t = list[i]; cutP(t); cut(t); list.splice(i, 1);
   }
+  const dhMade = [];   // 先に回送を全部作ってから前後をつなぐ(回送どうし: 行きの回送 → 折り返して帰りの回送 もつなげる)
   for (const x of U.dh || []) {
     // 停車・通過する駅の並び(stops)。古い形(発駅・発・着駅・着だけ)も読む
     const stops = x.stops && x.stops.length >= 2 ? x.stops : [{ st: x.from, dep: x.dep }, { st: x.to, arr: x.arr }];
@@ -535,7 +569,9 @@ function ttUserOps(list) {
     ttSchedule(t); list.push(t);
     const set = { plat: Object.assign({}, x.plat || {}), turn: x.turn || null, fin: x.fin || null, begin: x.begin || null };
     stops.forEach(s => { if (s.plat != null && s.plat !== '') set.plat[s.st] = +s.plat; });
-    t.uset = set;
+    t.uset = set; dhMade.push([t, x, from, to, d0, a1]);
+  }
+  for (const [t, x, from, to, d0, a1] of dhMade) {
     if (x.prev) { const a = endAt(x.prev, from); if (!a) msg(`回送 ${t.no}: 前の列車 ${x.prev}(${from}止まり)が見つかりません`); else if (a.ev[a.ev.length - 1].arr > d0) msg(`回送 ${t.no}: 前の列車 ${x.prev} が着く前に発車します`); else join(a, t, x); }
     if (x.next) { const d = startAt(x.next, to); if (!d) msg(`回送 ${t.no}: 次の列車 ${x.next}(${to}始発)が見つかりません`); else if (d.ev[0].dep < a1) msg(`回送 ${t.no}: 次の列車 ${x.next} の発車に間に合いません`); else join(t, d, x); }
   }
@@ -616,7 +652,7 @@ function* ttLinkG(list) {
     // 京急の終着駅では、両数の違う列車はつながない(浦賀の車両交換: 着いた車両は回送で出ていき、別の車両が回送で入ってくる)。
     // 京成・北総側は時刻表に両数が無く仮の値なので、両数では判断しない
     const realCars = (() => { const ss = stByName.get(st); return ss && ss.stops.length && N[E[ss.stops[0][0]].a].y < 890; })();
-    pairUp(as, ds, TURN_MIN, 30, (a, d) => pairOK(st, a, d) && (!realCars || carsOf(a) === d.cars), 30);
+    pairUp(as, ds, ttStn(st, 'turn') != null ? ttStn(st, 'turn') : TURN_MIN, 30, (a, d) => pairOK(st, a, d) && (!realCars || carsOf(a) === d.cars), 30);
     if (realCars) for (const a of as) if (!a.next) { const k = ttRunOf(a).key, d = k && ds.find(d => ttRunOf(d).key === k && tDep(d) >= tArr(a) && tDep(d) <= tArr(a) + 30 && carsOf(a) !== d.cars); if (d) { a.swapOut = d; d.swapIn = a; } }
     const plats = [...new Set(edges)].map(e => ({ e, a: null, free: -1 }));
     for (const a of as) {
@@ -644,7 +680,7 @@ function* ttLinkG(list) {
       const d = (ka && cs.find(d => ttRunOf(d).key === ka)) || cs[0];
       if (d) { a.next = d; d.prev = a; kept.push(a); }
     }
-    pairUp(as, ds, minTurn || TURN_MIN, TURN_MAX, (a, d) => (carsOf(a) === d.cars || (st === SHINA && d.cars === 12 && carsOf(a) === 8 && ttRunOf(a).key && ttRunOf(a).key === ttRunOf(d).key)) && pairOK(st, a, d), DEPOT_ST.has(st) ? DEPOT_MAX : RUN_MAX);
+    pairUp(as, ds, minTurn || (ttStn(st, 'turn') != null ? ttStn(st, 'turn') : TURN_MIN), TURN_MAX, (a, d) => (carsOf(a) === d.cars || (st === SHINA && d.cars === 12 && carsOf(a) === 8 && ttRunOf(a).key && ttRunOf(a).key === ttRunOf(d).key)) && pairOK(st, a, d), DEPOT_ST.has(st) ? DEPOT_MAX : RUN_MAX);
     if (st === SHINA) for (const d of ds) if (d.prev && d.cars === 12 && carsOf(d.prev) === 8) d.added4 = true;   // 同じ運行番号で8両→12両: 品川で4両を足す
     for (const a of as) {
       if (!a.next || kept.includes(a)) continue;
@@ -844,7 +880,8 @@ function* ttLinkG(list) {
           // 待避線で待っている列車(スカイライナーに抜かれる普通など)は、止まっている間に追い抜いてよい
           if (x[2] && s0 >= 0 && x[1] - x[0] >= 90 && my > x[0] + 25 && my < x[1] - 30) { s0 = -1; continue; }
           const mb = Math.abs(r - r1) < 1e-6 && r1 <= 10 ? 90 : 45;   // 京成高砂に着くときは、前を通った列車から90秒あける(高砂の手前で詰まる)
-          const sg = my < a - 45 ? -1 : my > b + mb ? 1 : 0; if (!sg || (s0 && sg !== s0)) bad = true; s0 = sg || s0; }
+          const mid = !st && Math.abs(r - r1) >= 1e-6, ta = mid && termAt(o, r) ? TERM_CLR : 0, oa = mid && origAt(o, r) ? ORIG_CLR : 0;   // 途中で通る駅で終わる・始まる列車は、本線のホームにいる間(引上線へ入りきるまで・引上線から戻ってから)を避ける
+          const sg = my < a - 45 - oa ? -1 : my > b + mb + ta ? 1 : 0; if (!sg || (s0 && sg !== s0)) bad = true; s0 = sg || s0; }
         if (bad && cnt >= 2) return 6; }
       return 0; };
     // 京成高砂を通過して北総線へ向かう下りの列車(スカイライナーなど)の時刻。車庫から3番線に出てくる回送は、これとも重ねない
@@ -859,14 +896,18 @@ function* ttLinkG(list) {
     const tkIn = x => !tkUpT.some(y => y > x - 100 && y < x + 40) && !TAKA_STOPS.some(o => o.pl === 3 && o.d > x - 90 && o.d < x + 30);   // 北総線へ出ていく下りの列車(3番線)とも交差する
     // 北総線内を、駅と駅の間で速さを変えて(止まって)走る: 前の列車の後ろ・後ろの列車の前に、各駅で45秒以上あけて収まる時刻の並びを、前から順に決める。
     //  r0 を t0 秒に出て r1 に着く。want = r1 に着く秒(null = いちばん早く)。待避線で待っている前の列車は、止まっている間に追い抜いてよい
+    // 北総線内で終わる・始まる列車(印旛日本医大など、本線のホームで折り返す)。回送が途中でその駅を通るとき、終わる列車は着いてから引上線へ入りきるまで(出るまで40秒・入るのに45秒)、
+    //  始まる列車は引上線から戻ってくる発車の100秒前から、その線にいる
+    const TERM_CLR = envN('DH_TC', 85), ORIG_CLR = envN('DH_OC', 100);
+    const termAt = (o, r) => { const n = o.t.names; return n.length > 1 && R[n[n.length - 1]] === r; }, origAt = (o, r) => { const n = o.t.names; return n.length > 1 && R[n[0]] === r; };
     const GAPR = envN('DH_GAPR', 1);
     const gapR = (r0, r1, t0, want) => { const dir = Math.sign(r1 - r0), lo = Math.min(r0, r1), hi = Math.max(r0, r1), sts = RV.filter(r => r >= lo - 1e-6 && r <= hi + 1e-6).sort((a, b) => (a - b) * dir);
       const os = rProf.filter(o => o.dir === dir && o.t1 > t0 - 600 && o.t0 < t0 + 4000 && o.hi > lo && o.lo < hi), side = new Map(), ts = [t0];
       for (const o of os) { const x = atR(o, r0); if (!x) continue; const sd = x[1] < t0 ? 1 : -1; side.set(o, sd); if (sd === 1 ? t0 < x[1] + 75 : t0 > x[0] - 15) return null; }   // 出発駅: 先に出た列車の75秒後、あとから来る列車の15秒前まで
       for (let k = 1; k < sts.length; k++) { const r = sts[k], last = k === sts.length - 1; let lb = ts[k - 1] + Math.abs(r - sts[k - 1]) * 60, ub = Infinity;
         for (const o of os) { const x = atR(o, r); if (!x) continue; let sd = side.get(o); if (sd == null) { sd = x[1] < lb ? 1 : -1; side.set(o, sd); }
-          if (sd === 1) { if (!last && x[2] && x[1] - x[0] >= 90 && lb > x[0] + 25 && lb < x[1] - 30) { side.set(o, -1); ub = Math.min(ub, x[1] - 30); continue; } lb = Math.max(lb, (last ? x[0] : x[1]) + (Math.abs(o.pts[0][0] - r) < 1e-6 ? 90 : 45)); }   // その駅から出る始発の列車(待避線・引上線から出てくる)の後ろは90秒
-          else ub = Math.min(ub, x[0] - 45); }
+          if (sd === 1) { if (!last && x[2] && x[1] - x[0] >= 90 && lb > x[0] + 25 && lb < x[1] - 30) { side.set(o, -1); ub = Math.min(ub, x[1] - 30); continue; } lb = Math.max(lb, (last ? x[0] : x[1]) + (Math.abs(o.pts[0][0] - r) < 1e-6 ? 90 : 45) + (!last && termAt(o, r) ? TERM_CLR : 0)); }   // その駅から出る始発の列車(待避線・引上線から出てくる)の後ろは90秒。その駅で終わる列車は引上線へ入りきるまで
+          else ub = Math.min(ub, x[0] - 45 - (!last && origAt(o, r) ? ORIG_CLR : 0)); }
         if (last && want != null) { if (want < lb || want > ub) return null; ts.push(want); } else { if (lb > ub) return null; ts.push(lb); } }
       return { sts, ts }; };
     const gapPass = g => g.sts.slice(0, -1).map((r, k) => ({ name: RSTN[RV.indexOf(r)], t: g.ts[k], ref: true })).filter(w => R[w.name] > 10 && R[w.name] <= 32.5);
@@ -901,6 +942,11 @@ function* ttLinkG(list) {
     const planIn = (cat, A, self, commit) => (cat !== 'main' ? accIn(A, self) : null) || sgIn(A, self, commit) || (cat === 'main' && MACC ? accIn(A, self) : null);
     const planOut = (cat, P, self, commit, ib) => ib ? accOut(P, self, ib) : (cat !== 'main' ? accOut(P, self) : null) || sgOut(P, self, commit) || (cat === 'main' && MACC ? accOut(P, self) : null);
     const stop2 = pl => pl.u2 ? evS(NRT2, pl.a2, pl.p2) : thru(NRT2, pl.a2);
+    // 北総線経由の回送が印旛日本医大を通る時刻(pass)を通過点にする。計画はその時刻に通る線を押さえるので、印旛日本医大で折り返す列車は回送が来る前に引上線へ入る
+    //  dir = 1(下り: 高砂→成田空港)・-1(上り)。停車駅は R の小さい順(下り)・大きい順(上り)。R の無い駅(空港第2ビル・成田空港)は成田空港側
+    const inbThru = (dh, dir) => { if (!stByName.has(INB) || dh.ev.some(e => e.name === INB)) return; const w = (dh.pass || []).find(x => x.name === INB); if (!w) return;
+      const rr = e => R[e.name] != null ? R[e.name] : 99, k = dh.ev.findIndex(e => dir > 0 ? rr(e) > R[INB] : rr(e) < R[INB]); if (k <= 0) return;
+      dh.ev.splice(k, 0, Object.assign(thru(INB, w.t), { wait: true })); dh.pass = dh.pass.filter(x => x !== w); };
     const passR = (t, tY, du, down, hw) => { const rS = hw ? R[hw.name] : null; t.pass = RSTN.filter(n => R[n] > 10 && R[n] <= 32.5 && !(hw && n === hw.name)).map(n => ({ name: n, t: (down ? tY - du * (32.5 - R[n]) / 22.5 - (hw && R[n] < rS ? hw.w : 0) : tY + du * (32.5 - R[n]) / 22.5 + (hw && R[n] < rS ? hw.w : 0)), ref: true })); };   // hw = 途中の駅で止まって待つ(その手前・先で時刻がずれる)
     // 計画から列車(停車駅と時刻)を作る。あわせて、使う線・時間を記録する
     const mkIn = (j, pl, src, sk) => { const tail = [stop2(pl), evS(NRT, pl.A, pl.A + 25)]; let ev;
@@ -909,7 +955,7 @@ function* ttLinkG(list) {
         sec.s1d.push([pl.tY, pl.aN]); sec.s2d.push([pl.pN, pl.a2]); if (pl.un) sec.nk.push([pl.aN, pl.pN]); }
       else ev = pl.w ? [evS(DH_ST, pl.dp - pl.w - RS - 55, pl.dp - pl.w - RS), evS(NA, pl.dp - pl.w, pl.dp), ...tail] : [evS(DH_ST, pl.dp + 5 - RS - 55, pl.dp + 5 - RS), thru(NA, pl.dp + 5), ...tail];
       if (sk && !src && pl.route !== 'acc') { ev[0] = evS(DH_ST, sk.sp + RK, ev[0].ds); ev.unshift(evS(SK, sk.sp - 60, sk.sp)); }   // 京成佐倉から来る
-      const dh = mk(j.d, ev, j.cat); if (pl.route === 'acc' && !src) { if (pl.gp) dh.pass = gapPass(pl.gp); else passR(dh, pl.tY, pl.du, true, pl.hw); if (!pl.un && !pl.nkS) dh.pass.push({ name: NK, t: pl.aN, ref: true }); }
+      const dh = mk(j.d, ev, j.cat); if (pl.route === 'acc' && !src) { if (pl.gp) dh.pass = gapPass(pl.gp); else passR(dh, pl.tY, pl.du, true, pl.hw); if (!pl.un && !pl.nkS) dh.pass.push({ name: NK, t: pl.aN, ref: true }); inbThru(dh, 1); }
       ttSchedule(dh); addProf(dh); if (hasAcc) addR(dh); return dh; };
     const mkOut = (j, pl, cat, sk, inb) => { const head = [evS(NRT, pl.P - 60, pl.P), stop2(pl)]; let ev;
       if (pl.route === 'acc') { ev = [...head, ...(pl.un ? [evS(NK, pl.aN, pl.pN)] : pl.nkS ? [thru(NK, pl.aN)] : []), ...(pl.hw ? [evS(pl.hw.name, pl.hw.t, pl.hw.t + pl.hw.w, { wait: true })] : []), evS(TAKA, pl.tT || pl.tY + pl.du, (pl.tT || pl.tY + pl.du) + 25)]; if (!inb) { tkUpT.push(pl.tT || pl.tY + pl.du); tkMemo.clear(); }
@@ -917,7 +963,7 @@ function* ttLinkG(list) {
       else { ev = pl.w ? [...head, evS(NA, pl.ar, pl.ar + pl.w), evS(DH_ST, pl.ar + pl.w + RS, pl.ar + pl.w + RS + 25)] : [...head, thru(NA, pl.ar - 20), evS(DH_ST, pl.ar - 20 + RS, pl.ar - 20 + RS + 25)]; sgEnd.push(ev[ev.length - 1].as); }
       if (sk) { const e = ev[ev.length - 1]; ev[ev.length - 1] = evS(DH_ST, e.as, sk.dp); ev.push(evS(SK, sk.dp + RK, sk.dp + RK + 25)); }   // そのまま京成佐倉まで行く
       if (inb) ev[ev.length - 1] = evS(INB, inb.t, inb.t + 25);   // 印旛日本医大で止まる
-      const dh = mk(j.a, ev, cat); if (pl.route === 'acc') { if (pl.gp) dh.pass = gapPass(pl.gp); else passR(dh, pl.tY, pl.du, false, pl.hw); if (inb) dh.pass = dh.pass.filter(w => R[w.name] > R[INB]); if (!pl.un && !pl.nkS) dh.pass.push({ name: NK, t: pl.aN, ref: true }); }
+      const dh = mk(j.a, ev, cat); if (pl.route === 'acc') { if (pl.gp) dh.pass = gapPass(pl.gp); else passR(dh, pl.tY, pl.du, false, pl.hw); if (inb) dh.pass = dh.pass.filter(w => R[w.name] > R[INB]); if (!pl.un && !pl.nkS) dh.pass.push({ name: NK, t: pl.aN, ref: true }); if (!inb) inbThru(dh, -1); }
       ttSchedule(dh); addProf(dh); if (hasAcc) addR(dh); return dh; };
     // j.kind: 'fix' = 折り返しが決まっている(線だけ選ぶ)  'in' = 回送で入ってくる(着く時刻も選ぶ)  'out' = 回送で出ていく(出る時刻も選ぶ)
     // 印旛日本医大まで回送する列車(INB_FIX): 着いてよいのは、印旛日本医大始発の上りの列車が出て150秒後から、つながる列車の発車50秒前まで(印旛日本医大は2線で、ほかの折り返しと重ねない)
@@ -1204,6 +1250,9 @@ const DEPOT_NAME = { '神奈川新町': '新町検車区', '金沢文庫': '金�
 for (const [st, l] of SIDINGS) l.slice().sort((a, b) => N[a.node].y - N[b.node].y || N[a.node].x - N[b.node].x).forEach((sd, i, a) => { sd.label = (DEPOT_NAME[st] && a.length > 2 ? '車庫線' : '引上線・留置線') + (a.length > 1 ? ' ' + (i + 1) : ''); });
 const NOREV = new Set([SHINA, '泉岳寺', '青砥', '京成高砂']);
 // 京成・北総の途中駅も、ホームでそのまま折り返すと逆線を走ることになるので同じ扱い(行き止まりの終着駅は除く)
+// a の終着駅で、次の列車 d が a の来た向きのまま先へ進むか(路線の駅の並び OT_LINES で、a の1つ前の駅 → 終着駅 → d の次の駅 が同じ向きに並ぶ)
+const fwdOn = (a, d) => { const p = a.names[a.names.length - 2], s = a.names[a.names.length - 1], q = d.names[1]; if (!p || !q || d.names[0] !== s) return false;
+  return OT_LINES.some(L => { const i = L.indexOf(p), j = L.indexOf(s), k = L.indexOf(q); return i >= 0 && j >= 0 && k >= 0 && ((i < j && j < k) || (i > j && j > k)); }); };
 const noRev = nm => NOREV.has(nm) || (!TERMINI.has(nm) && stByName.has(nm) && stByName.get(nm).stops.length > 0 && N[E[stByName.get(nm).stops[0][0]].a].y > KS_Y);   // ホームでそのまま逆向きに折り返せない駅(引上線を使う)
 let SHINA_E = null;
 function ttAllowShina(t) {
@@ -1392,8 +1441,20 @@ function ttAllowSg(t) {
   const set = new Set(ok); t.sg = { q, pref: ok[0], alt: ok[1] };
   return (i, e) => i !== q || set.has(e);
 }
+// 押上(4線): 外側の1・4番線は、京成側・浅草線側ともシーサスクロッシングより外で本線につながる → 折り返す列車は内側の2・3番線だけ。反対側へそのまま進む列車は外側も使える
+let OSHI_E = null;
+function ttAllowOshi(t) {
+  const n = t.names.length, a = t.names[0] === '押上', z = t.names[n - 1] === '押上';
+  if ((!a && !z) || n < 2) return null;
+  if (OSHI_E === null) { const s = stByName.get('押上'), l = s ? [...new Set(s.stops.map(([e]) => e))].sort((x, y) => N[E[x].a].y - N[E[y].a].y) : []; OSHI_E = l.length === 4 ? new Set([l[1], l[2]]) : false; }
+  if (!OSHI_E) return null;
+  const ks = nm => nm === '京成曳舟';
+  const thruA = a && t.prev && t.prev.names.length > 1 && ks(t.prev.names[t.prev.names.length - 2]) !== ks(t.names[1]);
+  const thruZ = z && t.next && t.next.names.length > 1 && ks(t.next.names[1]) !== ks(t.names[n - 2]);
+  return (i, e) => !((i === 0 && a && !thruA) || (i === n - 1 && z && !thruZ)) || OSHI_E.has(e);
+}
 function ttAllow(t) {
-  const fs = [ttAllowShina(t), ttAllowTaka(t), ttAllowAoto(t), ttAllowNekoya(t), ttAllowNarita(t), ttAllowNa(t), ttAllowSg(t), ...MIDLOOP.map(n => ttAllowMid(t, n))].filter(Boolean);
+  const fs = [ttAllowShina(t), ttAllowTaka(t), ttAllowAoto(t), ttAllowNekoya(t), ttAllowNarita(t), ttAllowNa(t), ttAllowSg(t), ttAllowOshi(t), ...MIDLOOP.map(n => ttAllowMid(t, n))].filter(Boolean);
   return fs.length ? (i, e) => fs.every(f => f(i, e)) : null;
 }
 // ===== 番線の占有管理つきで、発車の早い列車から順に経路を確定していく =====
@@ -1622,7 +1683,7 @@ function ttPlanner(useSiding) {
         break sidingLoop;
       }
     }
-    if (!route && !(uTurn && uTurn.mode === 'plat') && nx && noRev(t.names[n - 1]) && !t.exitEnd && t.names[n - 1] !== '京成成田' && !t.dh) {   // 回送は、着いた向きのまま次の列車になる   // 京成成田は中線(上下共用)で向きを変えられる: 着いたホームからそのまま折り返す
+    if (!route && !(uTurn && uTurn.mode === 'plat') && nx && noRev(t.names[n - 1]) && !t.exitEnd && t.names[n - 1] !== '京成成田' && !t.dh && !(nx.dh && fwdOn(t, nx))) {   // 次が同じ向きへ進む回送(宗吾参道へ入庫するなど)なら、向きを変えないのでそのまま続ける   // 回送は、着いた向きのまま次の列車になる   // 京成成田は中線(上下共用)で向きを変えられる: 着いたホームからそのまま折り返す
       // 品川ではホームでそのまま下りに折り返せない。引上線が使えなければ、着いた列車は回送で出たとみなし、次の列車は1番線から出す
       const d = nx; t.next = null; d.prev = null; stat.unpaired = (stat.unpaired || 0) + 1;
       if (t.uset || d.uset || t.userLink === d) uErr(t, `${t.names[n - 1]}で${d.no}へ折り返せませんでした(ホームで向きを変えられない駅で、引上線が使えない。番線・引上線の指定を確かめてください)`);
@@ -1682,7 +1743,7 @@ function ttPlanner(useSiding) {
     d.A[0] = a1; d.P[0] = Math.max(dep0, d.P[0]);   // 始発駅で追い抜かれてから出る列車は、遅らせた発車時刻を保つ
     // 待避線の無い始発駅(印旛日本医大など)で、通過列車を先に通してから出る列車: 通過列車が行ってからホームへ入る
     if (lateEnter(d, r.stopE[0])) d.A[0] = Math.max(d.A[0], d.ev[0].ds - 22);
-    d.A.unshift(from); d.P.unshift(Math.max(from, d.A[0] - tBack)); d.start = from;
+    { const p0 = Math.max(from, d.A[0] - tBack); d.A.unshift(from); d.P.unshift(p0); } d.start = from;
     if (d.off) d.off.unshift(undefined);
     return true;
   }
@@ -1694,7 +1755,8 @@ function ttPlanner(useSiding) {
     for (const d of planned) {
       if (d.names[0] !== stn || d.prev || d.exitStart || d.fromSiding || d.k0 !== 0 || (d.uset && d.uset.begin)) continue;
       const dep0 = d.ev[0].dep * 60;
-      for (const from of [dep0 - 110, dep0 - 80, dep0 - 150]) for (const sd of sds) {
+      const sIn = ttStn(stn, 'in'), fr = sIn != null ? [0, 30, -30].map(x => dep0 - sIn * 60 - 40 + x) : [dep0 - 110, dep0 - 80, dep0 - 150];
+      for (const from of fr) for (const sd of sds) {
         if (d.fromSiding || !isFreeAt(sd.e, from, dep0 - 20, d) || !enterFrom(d, sd, from)) continue;
         d.deadIn = true; reserve(sd.e, from, dep0 - 20, d); stat.deadIn = (stat.deadIn || 0) + 1;
         break;
@@ -1705,14 +1767,224 @@ function ttPlanner(useSiding) {
       if (t.names[n - 1] !== stn || t.next || t.exitEnd || t.tail || (t.uset && t.uset.fin)) continue;
       const ta = t.A[t.A.length - 1];
       for (const sd of sds) {
-        if (!isFreeAt(sd.e, ta + 45, ta + 110, t)) continue;
+        const sOut = ttStn(stn, 'out'), lv0 = sOut != null ? Math.max(20, sOut * 60) : 40;
+        if (!isFreeAt(sd.e, ta + lv0 + 5, ta + lv0 + 70, t)) continue;
         const r = buildTimedRoute(t.names, t.long, Object.assign({}, optOf(t), { tail: sd, after: null, isFree: (i, e) => e === t.route.stopE[i] }));
         if (!r || r.stopD.length !== t.route.stopD.length + 1 || t.names.some((_, i) => r.stopE[i] !== t.route.stopE[i])) continue;
-        const out = r.stopD[r.stopD.length - 1] - r.stopD[r.stopD.length - 2], leave = ta + 40, tOut = Math.max(15, Math.min(45, out / 2.5));
+        const out = r.stopD[r.stopD.length - 1] - r.stopD[r.stopD.length - 2], leave = ta + lv0, tOut = Math.max(15, Math.min(45, out / 2.5));
         t.route = r; t.sd = undefined; t.tail = sd; t.deadOut = true;
         t.P[t.P.length - 1] = leave; t.A.push(leave + tOut); t.P.push(leave + tOut + 20); t.end = leave + tOut + 20;
-        reserve(sd.e, ta + 45, t.end, t); stat.deadOut = (stat.deadOut || 0) + 1;
+        reserve(sd.e, ta + lv0 + 5, t.end, t); stat.deadOut = (stat.deadOut || 0) + 1;
         break;
+      }
+    }
+  }
+  // ===== 検車区(YARD_ST): 1日の始まり・終わりの列車を車庫の線に並べる =====
+  function yard() {
+    const MV = d => Math.max(40, Math.min(180, d / 1.5)), REV = 60, PAD = 90;
+    for (const st of YARD_ST) {
+      const Y = yardOf(st); if (!Y) continue;
+      const occ = Y.tracks.map(() => []);   // 車庫の線ごと: {slot 0=奥 1=手前, a, b, xs 出入りの時刻}
+      const rc = new Map();
+      const route = (from, endSet, trimEnd, key) => { if (rc.has(key)) return rc.get(key); const r = findRoute(from, [], endSet, null, false); let R = null; if (!r.fail) { const len = r.total - trimEnd; if (len > 5) { const segs = cutAt(r, len); R = { segs, total: len, stopD: [0, len], stopE: [segs[0].e, segs[segs.length - 1].e] }; } } rc.set(key, R); return R; };
+      const slotTrim = (tr, slot, L) => Y.plat ? 2 + slot * 21 : slot ? 2 + L + 3 : 2;
+      const cap = (tr, L) => Y.plat ? Math.max(1, Math.min(6, Math.floor((tr.len - 23) / 21) + 1)) : tr.len >= 2 * L + 10 ? 2 : 1;
+      const slotName = (tr, slot, L) => { const c = cap(tr, L); return c <= 1 ? '' : c === 2 ? (slot ? '(手前)' : '(奥)') : '(奥から' + (slot + 1) + '本目)'; };
+      const fits = (k, slot, a, b, xs) => { for (const o of occ[k]) { if (o.slot === slot && o.a < b + 30 && a < o.b + 30) return false; if (o.slot > slot && xs.some(x => o.a < x + PAD && x - PAD < o.b)) return false; if (o.slot < slot && o.xs.some(x => a < x + PAD && x - PAD < b)) return false; } return true; };   // 奥の車両の出入りの時刻に手前に車両がいてはだめ
+      const order = () => Y.tracks.map((tr, k) => k).sort((x, y) => occ[x].length - occ[y].length || x - y);
+      const reqs = [];
+      for (const d of planned) if (d.route && d.names[0] === st && !d.prev && !d.exitStart && !d.fromSiding && d.k0 === 0 && !d.unit && !d.cut && !(d.uset && d.uset.begin)) reqs.push({ d, out: true, T: d.ev[0].dep * 60 });
+      for (const t of planned) if (t.route && t.names[t.names.length - 1] === st && !t.next && !t.exitEnd && !t.tail && !t.unit && !t.cut && !(t.uset && t.uset.fin)) reqs.push({ t, out: false, T: t.A[t.A.length - 1] });
+      { // 列車ごとに行ける引上線(時刻を見ない)と、引上線ごとの行ける列車の数
+        const can = (q, h) => { if (q.out) { const d = q.d, r = buildTimedRoute(d.names, d.long, Object.assign({}, d._opt, { startAt: { e: h.e, t: h.t }, startExtra: true, tail: d.tail || null, after: d.tail ? null : d._opt.after, isFree: (i, e) => e === d.route.stopE[i] })); return !!r && r.stopD.length === d.route.stopD.length + 1 && r.stopD[1] <= 400 && d.names.every((_, i) => r.stopE[i] === d.route.stopE[i]); }
+          const t = q.t, r = buildTimedRoute(t.names, t.long, Object.assign({}, optOf(t), { tail: h, tailMax: 320, tailRev: true, after: null, isFree: (i, e) => e === t.route.stopE[i] })); return !!r && r.stopD.length === t.route.stopD.length + 1 && t.names.every((_, i) => r.stopE[i] === t.route.stopE[i]); };
+        const need = new Map(Y.hs.map(h => [h, 0]));
+        for (const q of reqs) { q.hs = Y.plat ? [] : Y.hs.filter(h => can(q, h)); q.hs.forEach(h => need.set(h, need.get(h) + 1)); }
+        for (const q of reqs) q.hs.sort((x, y) => need.get(x) - need.get(y));
+      }
+      const viaOf = (q, tr) => q.hs.filter(h => tr.via.includes(h));
+      // 駅の近くの分岐点ごとの「列車がいる時間」(計画の A/P を線形に補間。前 = 先頭が着く時刻、後 = 最後尾が抜ける時刻)
+      const sx = stByName.get(st), inBox = nd => Math.abs(N[nd].x - sx.cx) < 140 && Math.abs(N[nd].y - sx.ly) < 110, ivs = new Map(), YMG = 15;
+      const tAt = (o, x, back) => { const sd = o.route.stopD, A = o.A, P = o.P; if (x <= sd[0] + 0.5) return back ? P[0] : A[0]; for (let i = 0; i + 1 < sd.length; i++) { if (Math.abs(x - sd[i + 1]) < 0.5) return back ? P[i + 1] : A[i + 1]; if (x < sd[i + 1]) return P[i] + (A[i + 1] - P[i]) * (x - sd[i]) / (sd[i + 1] - sd[i]); } return back ? o.end : A[A.length - 1]; };
+      // 経路の分岐点の通過: [ノード, 覆い始め, 覆い終わり]。tf(x, back) = 先頭が x に来る時刻(back なら止まっていたあと出る時刻)、endT = 終点に着いてから動くまで
+      const nodePass = (segs, total, L, tf, endT, d0 = -Infinity, d1 = Infinity) => { const out = [];
+        for (const g of segs) { const e = E[g.e]; if (e.portal) continue;
+          for (const [tp, dd] of [[g.t0, g.d0], [g.t1, g.d1]]) { const nd = tp < 1e-6 ? e.a : tp > 1 - 1e-6 ? e.b : -1; if (nd < 0 || !inBox(nd) || dd < d0 || dd > d1) continue;
+            out.push([nd, tf(dd, false), dd + L >= total ? endT : tf(dd + L, true)]); } }
+        return out; };
+      const eIv = new Map();   // ホームの辺にいる時間
+      const addIv = o => { const r = o.route; if (!r || !r.segs || !r.stopD || !o.A || o.A.length !== r.stopD.length) return; const L = (o.cars || 8) * 1.5;
+        for (const [nd, a, b] of nodePass(r.segs, r.total, L, (x, back) => tAt(o, x, back), o.end)) { if (!ivs.has(nd)) ivs.set(nd, []); ivs.get(nd).push([a, b, o]); }
+        for (const g of r.segs) { const e = E[g.e]; if (e.portal || isNaN(stopX[g.e]) || !inBox(e.a)) continue; if (!eIv.has(g.e)) eIv.set(g.e, []); eIv.get(g.e).push([tAt(o, g.d0, false), g.d1 + L >= r.total ? o.end : tAt(o, g.d1 + L, true), o]); } };
+      for (const o of planned) addIv(o); for (const o of units) addIv(o);
+      const skip = (o, own) => o === own || o.no === own.no || o === own.prev || o === own.next;
+      const clash = (np, own, plat) => { for (const [nd, a, b] of np) for (const v of ivs.get(nd) || []) if (!skip(v[2], own) && a - YMG < v[1] && v[0] < b + YMG) return v[2];
+        if (plat) for (const v of eIv.get(plat.e) || []) if (!skip(v[2], own) && plat.a - YMG < v[1] && v[0] < plat.b + YMG) return v[2];
+        return null; };
+      const lgC = new Map(), legOut = (d, h) => { const k = 'o' + d.no + ':' + h.node; if (lgC.has(k)) return lgC.get(k); const r = buildTimedRoute(d.names, d.long, Object.assign({}, d._opt, { startAt: { e: h.e, t: h.t }, startExtra: true, tail: d.tail || null, after: d.tail ? null : d._opt.after, isFree: (i, e) => e === d.route.stopE[i] })); const v = r && r.stopD.length === d.route.stopD.length + 1 && r.stopD[1] <= 400 && d.names.every((_, i) => r.stopE[i] === d.route.stopE[i]) ? r : null; lgC.set(k, v); return v; };
+      const legIn = (t, h) => { const k = 'i' + t.no + ':' + h.node; if (lgC.has(k)) return lgC.get(k); const r = buildTimedRoute(t.names, t.long, Object.assign({}, optOf(t), { tail: h, tailMax: 320, tailRev: true, after: null, isFree: (i, e) => e === t.route.stopE[i] })); const v = r && r.stopD.length === t.route.stopD.length + 1 && t.names.every((_, i) => r.stopE[i] === t.route.stopE[i]) ? r : null; lgC.set(k, v); return v; };
+      const OUT_SH = [0, -30, -60, -90, -120, -180, -240, -300], IN_SH = [0, 30, 60, 90, 120, 180, 240, 300, 420, 600];
+      // ホームで向きを変える検車区(Y.plat): 車庫の線 ⇄ ホーム。ホームでは列車の体と同じ場所に、頭を逆の端にして止まる
+      const P_OUT = [0, -30, -60, -90, -120, -180, -240, -300, -420, -600, 30, 60, 80], P_IN = [0, 30, 60, 90, 120, 180, 240, 300, 420, 600, -30, -60];
+      // 列車のホームでの動き方の候補: [車庫側の車両の頭がある線, その x, 線の上の位置, 進む向き]。向きを変える(頭 = 体の反対の端、向きは逆)/ 通り抜け(頭も向きも同じ)
+      const platModes = q => {
+        const o = q.out ? q.d : q.t, L = (o.cars || 8) * 1.5, r0 = o.route, g = q.out ? r0.segs[0] : r0.segs[r0.segs.length - 1];
+        const pe = q.out ? r0.stopE[0] : r0.stopE[r0.stopE.length - 1]; if (g.e !== pe || isNaN(stopX[pe])) return null;
+        const hx = q.out ? g.ax : g.bx, sgn = Math.sign(g.bx - g.ax); if (!sgn) return null;   // 頭の位置と進む向き(+1 = 右へ)
+        const modes = [];
+        { const D0 = q.out ? L : r0.total - L, sg = r0.segs.find(v => v.d0 <= D0 + 1e-6 && D0 <= v.d1 + 1e-6);
+          if (sg && D0 >= 0 && D0 <= r0.total && !E[sg.e].portal) { const tq = sg.d1 > sg.d0 ? sg.t0 + (sg.t1 - sg.t0) * (D0 - sg.d0) / (sg.d1 - sg.d0) : sg.t0, pt = pointOn(sg.e, tq); modes.push([sg.e, pt.x, tq, 1 - sg.d]); } }
+        modes.push([pe, hx, paramOf(pe, hx), g.d]);
+        return { o, L, pe, modes };
+      };
+      // 1つの線・位置・動き方・時刻のずらしで動けるか。okX(x) = 車庫の線での出入りの時刻 x で線が空いているか(先に見る)
+      //  返り値 { x, go }。出庫の go(mid): mid = { K: 昼に入庫した車両, x: 入った時刻 } なら、その車両が出ていく形にする
+      //  入庫の go(xOut): xOut = あとで出庫する時刻(無ければ1日の終わりまで車庫に)
+      const platTry = (q, c, k, slot, m, sh, okX, avoid) => {
+        const { o, L, pe } = c, [ke, kx, tp, kDir] = m, tr = Y.tracks[k];
+        let R = null;
+        const key = (q.out ? 'po' : 'pi') + k + ':' + slot + ':' + ke + ':' + Math.round(tp * 1000) + ':' + kDir;
+        if (rc.has(key)) R = rc.get(key); else {
+          if (q.out) { const pm = new Map([[ke, kx]]); pm.name = st; const r = findRoute(Y.pos(tr.node, slotTrim(tr, slot, L)), [pm], null, null, false);
+            if (!r.fail && r.segs.length && r.segs[r.segs.length - 1].e === ke && r.segs[r.segs.length - 1].d === kDir && Math.abs(r.segs[r.segs.length - 1].t1 - tp) < 0.02 && !r.revs.length && r.total > 5 && r.total <= 400) R = { segs: r.segs, total: r.total, stopD: [0, r.total], stopE: [r.segs[0].e, ke] }; }
+          else { const r = findRoute({ e: ke, t: tp }, [], new Set([tr.node]), kDir, false);
+            if (!r.fail && !r.revs.length && r.total <= 400) { const len = r.total - slotTrim(tr, slot, L); if (len > 5) { const segs = cutAt(r, len); R = { segs, total: len, stopD: [0, len], stopE: [ke, segs[segs.length - 1].e] }; } } }
+          rc.set(key, R);
+        }
+        if (!R) return null;
+        const mv = MV(R.total);
+        if (q.out) {
+          const d = o, dep0 = q.T, a1 = Math.min(d.A[0], dep0 - 120) + sh, x = a1 - mv;
+          if (x < STAY0 + 60 || !okX(x) || !isFreeAt(pe, a1 - 10, dep0, d) || (avoid && avoid(pe, x, dep0))) return null;
+          const np = nodePass(R.segs, R.total, L, x_ => x + (a1 - x) * x_ / R.total, dep0);
+          if (clash(np, d, { e: pe, a: a1, b: dep0 })) { stat.yardClash = (stat.yardClash || 0) + 1; return null; }
+          return { x, go: mid => {
+            const s0 = mid ? x : STAY0;
+            const K = { no: d.no, type: 'kaiso', dest: st, cars: d.cars, fl: 0, x0: '', x1: '', tseg: null, tt: true, s: 0, g: null, k0: 0, yard: 'out', yardSt: st, yardTr: tr.label + slotName(tr, slot, L), yardPlat: true, yardMid: !!mid, stay: !mid, dh: true,
+              names: [st], ev: [{ name: st, arr: Math.floor(s0 / 60), dep: Math.floor(x / 60) }], route: R, A: [s0, a1], P: [x, a1], start: s0, end: a1, prev: mid ? mid.K : null, next: d };
+            if (mid) mid.K.next = K;
+            d.prev = K; d.deadIn = 'yard'; d.A[0] = Math.min(d.A[0], a1); d.start = Math.min(d.start, a1);
+            reserve(pe, a1 - 10, dep0, d); if (!mid) occ[k].push({ slot, a: STAY0, b: x, xs: [x] }); units.push(K); stat.yardOut = (stat.yardOut || 0) + 1; addIv(K); addIv(d); return K; } };
+        }
+        const t = o, ta = q.T, leave = ta + 120 + sh, x = leave + mv;
+        if (!okX(x) || !isFreeAt(pe, ta, leave + 10, t)) return null;
+        const np = nodePass(R.segs, R.total, L, x_ => leave + (x - leave) * x_ / R.total, x + 30);
+        if (clash(np, t, { e: pe, a: ta, b: leave })) { stat.yardClash = (stat.yardClash || 0) + 1; return null; }
+        return { x, go: xOut => {
+          const b = xOut || STAY1;
+          t.P[t.P.length - 1] = Math.max(t.P[t.P.length - 1], leave); t.end = Math.max(t.end, leave); t.deadOut = 'yard';
+          const K = { no: t.no, type: 'kaiso', dest: st, cars: t.cars, fl: 0, x0: '', x1: '', tseg: null, tt: true, s: 0, g: null, k0: 0, yard: 'in', yardSt: st, yardTr: tr.label + slotName(tr, slot, L), yardPlat: true, yardMid: !!xOut, stay: !xOut, dh: true,
+            names: [st], ev: [{ name: st, arr: Math.floor(x / 60), dep: Math.floor(b / 60) }], route: R, A: [leave, x], P: [leave, b], start: leave, end: b, prev: t, next: null };
+          t.next = K; reserve(pe, ta, leave + 10, t); occ[k].push({ slot, a: x, b, xs: xOut ? [x, xOut] : [x] }); units.push(K); stat.yardIn = (stat.yardIn || 0) + 1; addIv(K); addIv(t); return K; } };
+      };
+      const platYard = (q, avoid) => { const c = platModes(q); if (!c) return false;   // 1本だけ(1日の始まりから / 1日の終わりまで車庫に)
+        for (const m of c.modes) for (const sh of q.out ? P_OUT : P_IN) for (const k of order()) for (let slot = 0; slot < cap(Y.tracks[k], c.L); slot++) {
+          const v = platTry(q, c, k, slot, m, sh, q.out ? x => fits(k, slot, STAY0, x, [x]) : x => fits(k, slot, x, STAY1, [x]), avoid);
+          if (v) { v.go(null); return true; } }
+        return false; };
+      // 出庫の列車をほかの番線から出す: 経路を作り直し、計画の番線の押さえをその番線へ移して試す。だめなら元に戻す
+      const altStart = (q, tryFn) => { const d = q.d, e0 = d.route.stopE[0], sx0 = stByName.get(st), old = d.route, oldSd = d.sd;
+        for (const [e] of sx0.stops) { if (e === e0 || isNaN(stopX[e])) continue;
+          const mine = (res.get(e0) || []).filter(v => v[2] === d); if (mine.some(v => !isFreeAt(e, v[0], v[1], d))) continue;
+          let r = null; try { r = buildTimedRoute(d.names, d.long, Object.assign({}, d._opt, { isFree: (i, x) => i === 0 ? x === e : x === old.stopE[i] })); } catch (err) { r = null; }
+          if (!r || r.stopD.length !== old.stopD.length || r.stopE[0] !== e || d.names.some((_, i) => i && r.stopE[i] !== old.stopE[i])) continue;
+          d.route = r; d.sd = undefined; res.set(e0, (res.get(e0) || []).filter(v => v[2] !== d)); for (const v of mine) reserve(e, v[0], v[1], d);
+          if (tryFn()) { stat.yardAlt = (stat.yardAlt || 0) + 1; return true; }
+          d.route = old; d.sd = oldSd; res.set(e, (res.get(e) || []).filter(v => v[2] !== d)); for (const v of mine) reserve(e0, v[0], v[1], d);
+        }
+        return false; };
+      const altEnd = (q, tryFn) => { const t = q.t, n = t.names.length, old = t.route, e1 = old.stopE[old.stopE.length - 1], oldSd = t.sd, oldPe = q.pe, sx0 = stByName.get(st);
+        if (t.tail || t.userCut || (t.uset && t.uset.fin)) return false;
+        for (const [e] of sx0.stops) { if (e === e1 || isNaN(stopX[e])) continue;
+          const mine = (res.get(e1) || []).filter(v => v[2] === t); if (mine.some(v => !isFreeAt(e, v[0], v[1], t))) continue;
+          let r = null; try { r = buildTimedRoute(t.names, t.long, Object.assign({}, optOf(t), { isFree: (i, x) => i === n - 1 ? x === e : x === old.stopE[i] })); } catch (err) { r = null; }
+          if (!r || r.stopD.length !== old.stopD.length || r.stopE[r.stopE.length - 1] !== e || t.names.some((_, i) => i < n - 1 && r.stopE[i] !== old.stopE[i])) continue;
+          t.route = r; t.sd = undefined; q.pe = e; res.set(e1, (res.get(e1) || []).filter(v => v[2] !== t)); for (const v of mine) reserve(e, v[0], v[1], t);
+          if (tryFn()) { stat.yardAltIn = (stat.yardAltIn || 0) + 1; return true; }
+          t.route = old; t.sd = oldSd; q.pe = oldPe; res.set(e, (res.get(e) || []).filter(v => v[2] !== t)); for (const v of mine) reserve(e1, v[0], v[1], t);
+        }
+        return false; };
+      const MID_GAP = 600;   // 昼の留置: 車庫の線に入ってから出るまで最低10分
+      const platPair = (qi, qo, avoid) => { const ci = platModes(qi), co = platModes(qo); if (!ci || !co) return false;   // 昼の留置: 入庫した車両がそのまま同じ線から出庫
+        for (const k of order()) for (let slot = 0; slot < Math.min(cap(Y.tracks[k], ci.L), cap(Y.tracks[k], co.L)); slot++) {
+          const vi = [];
+          for (const m of ci.modes) { for (const sh of P_IN) { const v = platTry(qi, ci, k, slot, m, sh, x => fits(k, slot, x, x + MID_GAP, [x])); if (v) { vi.push(v); break; } } }
+          if (!vi.length) continue;
+          const ok = (a, x) => x >= a.x + MID_GAP && fits(k, slot, a.x, x, [a.x, x]);
+          for (const m of co.modes) for (const sh of P_OUT) {
+            const v = platTry(qo, co, k, slot, m, sh, x => vi.some(a => ok(a, x)), avoid); if (!v) continue;
+            const a = vi.find(a => ok(a, v.x)), K = a.go(v.x); v.go({ K, x: a.x }); return true; }
+        }
+        return false; };
+      reqs.sort((x, y) => (y.out - x.out) || (x.out ? y.T - x.T : x.T - y.T));   // 出庫を先に(1日の始まりから線を使うので)遅く出るものから奥へ、そのあと入庫を着く順に奥から
+      if (Y.plat) {
+        // 昼の留置の組: 出庫を出る順に、同じ両数で30分以上前に着いた入庫のうち早く着いたものと組にする
+        const ins = reqs.filter(q => !q.out).sort((x, y) => x.T - y.T), outs = reqs.filter(q => q.out).sort((x, y) => x.T - y.T), pairs = [];
+        for (const qo of outs) { const qi = ins.find(q => !q.pair && (q.t.cars || 8) === (qo.d.cars || 8) && q.T + 1800 <= qo.T); if (qi) { qi.pair = qo.pair = true; qi.mate = qo; qo.mate = qi; pairs.push([qi, qo]); } }
+        const done = q => q.out ? !!q.d.prev : !!q.t.next;
+        const pend = (pe, a, b) => reqs.some(q => !q.out && !done(q) && (q.pe || (q.pe = (platModes(q) || {}).pe)) === pe && q.T - 10 < b && a < q.T + 300);   // まだ決めていない入庫が着く番線
+        const miss = q => { if (q.out ? !(platYard(q, pend) || altStart(q, () => platYard(q, pend)) || platYard(q) || altStart(q, () => platYard(q))) : !(platYard(q) || altEnd(q, () => platYard(q)))) stat.yardMiss = (stat.yardMiss || 0) + 1; }, back = [];
+        for (const q of reqs) if (q.out && !q.pair) miss(q);
+        const tryPair = (qi, qo) => platPair(qi, qo, pend) || altStart(qo, () => platPair(qi, qo, pend));
+        const place = (q, m, dep) => m ? (tryPair(q, m) || (first(q, m, dep + 1) && tryPair(q, m)) || platPair(q, m) || altStart(m, () => platPair(q, m))) : platYard(q);
+        const first = (qi, qo, dep = 0) => { const pe = (platModes(qo) || {}).pe; let n = 0; if (dep > 3) return 0;   // この出庫の番線にあとから着く入庫を先に決める(その組の出庫の番線についても順に)
+          for (const q of reqs) { if (q.out || q === qi || done(q) || (q.pe || (q.pe = (platModes(q) || {}).pe)) !== pe || q.T < qo.T - 900 || q.T > qo.T + 300) continue;
+            const m = q.pair && q.mate && !done(q.mate) ? q.mate : null;
+            if (altEnd(q, () => place(q, m, dep)) || place(q, m, dep)) { n++; stat.yardFirst = (stat.yardFirst || 0) + 1; if (m) stat.yardMid = (stat.yardMid || 0) + 1; } }
+          return n; };
+        for (const [qi, qo] of pairs) { if (done(qi) && done(qo)) continue; if (tryPair(qi, qo) || (first(qi, qo) && tryPair(qi, qo)) || altEnd(qi, () => tryPair(qi, qo)) || platPair(qi, qo) || altStart(qo, () => platPair(qi, qo))) stat.yardMid = (stat.yardMid || 0) + 1; else { qi.pair = qo.pair = false; back.push(qi, qo); } }
+        for (const q of back) if (q.out) miss(q);
+        for (const q of reqs) if (!q.out && !q.pair) miss(q);
+        continue;
+      }
+      for (const q of reqs) {
+        if (q.out) {   // 出庫: 車庫の線 → 引上線(折り返し) → ホーム
+          const d = q.d, L = (d.cars || 8) * 1.5, dep0 = q.T, sIn = ttStn(st, 'in'), a10 = sIn != null ? dep0 - sIn * 60 : dep0 - 60;
+          let done = false;
+          for (const sh of OUT_SH) { for (const k of order()) { const tr = Y.tracks[k];
+            for (let slot = 0; slot < cap(tr, L) && !done; slot++) for (const h of viaOf(q, tr)) {
+              const R = route(Y.pos(tr.node, slotTrim(tr, slot, L)), h.set, h.trim, 'o' + k + ':' + slot + ':' + h.node); if (!R) continue;
+              const a1 = a10 + sh, mv = MV(R.total), tBack = Math.max(15, Math.min(90, h.dist / 2.5)), from = a1 - tBack - REV, x = from - mv;
+              if (x < STAY0 + 60 || !fits(k, slot, STAY0, x, [x]) || !isFreeAt(h.e, x - 10, a1 + 10, d)) continue;
+              const lg = legOut(d, h); if (!lg) continue;
+              { // 動きの通る分岐点
+                const s1 = lg.stopD[1], P0 = Math.max(from, a1 - Math.max(15, Math.min(90, s1 / 2.5)));
+                const np = nodePass(R.segs, R.total, L, x_ => x + (from - x) * x_ / R.total, P0).concat(nodePass(lg.segs, s1, L, x_ => x_ >= s1 ? a1 : P0 + (a1 - P0) * x_ / s1, dep0, -Infinity, s1));
+                const pg = lg.segs.find(g => g.d0 <= s1 + 1e-6 && s1 <= g.d1 + 1e-6);
+                const by = clash(np, d, sh < 0 && pg ? { e: pg.e, a: a1, b: a10 } : null); if (by) { stat.yardClash = (stat.yardClash || 0) + 1; continue; }
+              }
+              if (!enterFrom(d, h, from, a1)) continue;
+              const K = { no: d.no, type: 'kaiso', dest: st, cars: d.cars, fl: 0, x0: '', x1: '', tseg: null, tt: true, s: 0, g: null, k0: 0, yard: 'out', yardSt: st, yardTr: tr.label + slotName(tr, slot, L), stay: true, dh: true,
+                names: [st], ev: [{ name: st, arr: Math.floor(STAY0 / 60), dep: Math.floor(x / 60) }], route: R, A: [STAY0, from], P: [x, from], start: STAY0, end: from, prev: null, next: d };
+              d.prev = K; d.deadIn = 'yard'; reserve(h.e, x - 10, a1 + 10, d); occ[k].push({ slot, a: STAY0, b: x, xs: [x] }); units.push(K); stat.yardOut = (stat.yardOut || 0) + 1; addIv(K); addIv(d); done = true; break;
+            }
+            if (done) break; }
+            if (done) break; }
+        } else {   // 入庫: ホーム → 引上線(折り返し) → 車庫の線
+          const t = q.t, L = (t.cars || 8) * 1.5, ta = q.T, sOut = ttStn(st, 'out'), leave0 = ta + (sOut != null ? Math.max(20, sOut * 60) : 40);
+          let done = false;
+          for (const sh of IN_SH) { for (const k of order()) { const tr = Y.tracks[k];
+            for (let slot = 0; slot < cap(tr, L) && !done; slot++) for (const h of viaOf(q, tr)) {
+              const R = route({ e: h.e, t: h.t }, tr.via && new Set([tr.node]), slotTrim(tr, slot, L), 'i' + k + ':' + slot + ':' + h.node); if (!R) continue;
+              const r = legIn(t, h); if (!r) continue;
+              const n = r.stopD.length, leave = leave0 + sh, out = r.stopD[n - 1] - r.stopD[n - 2], tOut = Math.max(15, Math.min(45, out / 2.5)), atH = leave + tOut, go = atH + REV, mv = MV(R.total), x = go + mv;
+              if (!fits(k, slot, x, STAY1, [x]) || !isFreeAt(h.e, leave + 5, go + 10, t)) continue;
+              { // 動きの通る分岐点(ホームを遅く出るなら、その間のホームも)
+                const s0 = r.stopD[n - 2], s1 = r.stopD[n - 1], mvT = x_ => x_ <= s0 ? (x_ < s0 - 1e-6 ? ta : leave) : leave + (atH - leave) * (x_ - s0) / (s1 - s0);
+                const np = nodePass(r.segs, s1, L, (x_, back) => x_ <= s0 && !back ? ta : mvT(x_), go, s0 - L, s1).concat(nodePass(R.segs, R.total, L, x_ => go + (x - go) * x_ / R.total, x + 30));
+                const pg = r.segs.find(g => g.d0 <= s0 + 1e-6 && s0 <= g.d1 + 1e-6);
+                const by = clash(np, t, sh > 0 && pg ? { e: pg.e, a: leave0, b: leave } : null); if (by) { stat.yardClash = (stat.yardClash || 0) + 1; continue; }
+              }
+              t.route = r; t.sd = undefined; t.tail = h; t.deadOut = 'yard';
+              t.P[t.P.length - 1] = leave; t.A.push(atH); t.P.push(go); t.end = go;
+              const K = { no: t.no, type: 'kaiso', dest: st, cars: t.cars, fl: 0, x0: '', x1: '', tseg: null, tt: true, s: 0, g: null, k0: 0, yard: 'in', yardSt: st, yardTr: tr.label + slotName(tr, slot, L), stay: true, dh: true,
+                names: [st], ev: [{ name: st, arr: Math.floor(x / 60), dep: Math.floor(STAY1 / 60) }], route: R, A: [go, x], P: [go, STAY1], start: go, end: STAY1, prev: t, next: null };
+              t.next = K; reserve(h.e, leave + 5, go + 10, t); occ[k].push({ slot, a: x, b: STAY1, xs: [x] }); units.push(K); stat.yardIn = (stat.yardIn || 0) + 1; addIv(K); addIv(t); done = true; break;
+            }
+            if (done) break; }
+            if (done) break; }
+        }
+        if (!(q.out ? q.d.prev : q.t.next)) stat.yardMiss = (stat.yardMiss || 0) + 1;
       }
     }
   }
@@ -1720,11 +1992,57 @@ function ttPlanner(useSiding) {
   // いったん引上線へ上げ、品川始発で「どこからともなく現れる」列車(折り返し相手のいない列車)の車両として使う。
   // 4両×2本で8両、×3本で12両。使い道のない車両は引上線へ入ったあと回送で出ていったとみなす
   const CUT_ST = '品川', CUT_WAIT = 30 * 60, CUT_LEAD = 150;
+  // 運用の編集の切り離し(uset.split = {st, side, mode, sd, d, lv}): 12両で走っている列車の4両を途中の駅で切り離す
+  //  mode: 'sd' = 引上線・留置線へ入ってその日はそこにいる / 'depot' = 引上線・車庫線を通って入庫(消える) / 'link' = その駅から出る列車 d(キー)の車両になる(引上線から出てくる)
+  //  side: 'front' = 前の4両 / 'rear' = 後ろの4両(増結した列車は付けた側)。lv = 切り離した4両が動き出す時刻(前は本体の発車より前、後ろは本体が出たあと)
+  function splitStations(t) {   // 12両で止まっている途中の駅
+    const n = t.names.length, ci = t.names.indexOf(COUPLE_ST), si = t.names.indexOf(CUT_ST), sj = t.names.indexOf('泉岳寺'), L = [];   // 12両は品川より泉岳寺側(浅草線)へは入れない
+    for (let q = 1; q < n - 1; q++) { if (t.ev[q].thru || (si >= 0 && sj >= 0 && (sj > si ? q > si : q < si))) continue; if (t.cpl && t.cpl.unit ? q > t.cpl.i : t.cars === 12 && (ci < 0 || q <= ci)) L.push(t.names[q]); }
+    return L;
+  }
+  function userSplits() {
+    for (const t of planned) {
+      const s = t.uset && t.uset.split; if (!s || !s.mode || !t.route || t.unit || t.cut) continue;
+      const cands = splitStations(t), st = s.st || (t.cpl && t.cpl.unit && cands.includes(CUT_ST) ? CUT_ST : cands.includes(COUPLE_ST) ? COUPLE_ST : cands[0]);
+      if (!cands.length) { uErr(t, '切り離し: 12両で止まる途中の駅がありません'); continue; }
+      if (!cands.includes(st)) { uErr(t, `切り離し: ${st}では12両ではないか、途中の停車駅ではありません(できる駅: ${cands.join('・')})`); continue; }
+      const q = t.names.indexOf(st), k = q + t.k0, side = t.cpl && t.cpl.unit ? t.cpl.side : (s.side === 'front' ? 'front' : 'rear');
+      const sds = SIDINGS.get(st) || []; if (!sds.length) { uErr(t, `切り離し: ${st}には引上線・留置線がありません`); continue; }
+      const h = (t.len || (t.cars ? t.cars * 1.5 : 12)) / 2, dC = t.route.stopD[k] + (side === 'front' ? h + COUPLE_LEN / 2 : -h - COUPLE_LEN / 2);   // 切り離す4両のまん中
+      const GP = 8 + COUPLE_LEN / 2, d0 = Math.max(0, Math.min(t.route.total, dC - GP)), g = segAt(t.route, d0), L = g.d1 - g.d0, tp = g.t0 + (g.t1 - g.t0) * (L > 0 ? (d0 - g.d0) / L : 0);
+      let at = side === 'front' ? t.P[k] - 25 : t.P[k] + 40; const lv = ttHMS(s.lv);
+      if (lv != null) { if (side === 'front' ? lv > t.P[k] - 25 || lv < t.A[k] + 15 : lv < t.P[k] + 30) uErr(t, `切り離し: 動き出す時刻 ${s.lv} は${side === 'front' ? '着いてから本体の発車25秒前まで' : '本体が出て30秒あと以降'}にしてください(自動で決めました)`); else at = lv; }
+      let d = null; if (s.mode === 'link') { d = planned.find(x => ttUKey(x) === s.d && x.names[0] === st);
+        if (!d) { uErr(t, `切り離し: ${st}から出る列車が選ばれていません`); continue; }
+        if (d.prev || d.fromSiding || d.k0 !== 0 || d.formed) { uErr(t, `切り離し: ${d.no} にはすでに前の運用(車両)があります`); continue; }
+        if (d.ev[0].dep * 60 < at + 120) { uErr(t, `切り離し: ${d.no} の発車に間に合いません`); continue; } }
+      const mvOf = r => Math.max(20, Math.min(45, r.total / 2.5));
+      const order = s.sd != null && s.sd !== '' ? sds.filter(x => x.e === +s.sd) : sds;
+      if (!order.length) { uErr(t, `切り離し: ${st}に指定の線がありません`); continue; }
+      let done = false; const why = [];
+      for (const sd of order) {
+        const r = buildTimedRoute([st], [0], { startAt: { e: g.e, t: tp }, startExtra: true, tail: sd, isFree: (i, e) => e === t.route.stopE[q] });
+        if (!r || r.stopD.length !== 3) { why.push(`${sd.label || '引上線'}: 線路がつながっていない`); continue; }
+        let last = 0, rev = 0; for (const x of r.segs) { const z = Math.sign(x.bx - x.ax); if (z && last && z !== last) rev++; if (z) last = z; } if (rev) { why.push(`${sd.label || '引上線'}: 向きを変えないと入れない`); continue; }
+        const mv = mvOf(r), inA = at + mv, end = s.mode === 'sd' ? STAY1 : s.mode === 'depot' ? inA + 60 : d.ev[0].dep * 60;
+        if (!isFreeAt(sd.e, at, end, t)) { const by = whoAt(sd.e, at, end, t); if (s.sd != null && s.sd !== '') uConf(t, 'sd', st, sd.e, at, end, by, `切り離し: ${sd.label || '引上線'}を ${ttSHMS(at)} 〜 ${ttSHMS(end)} にほかの列車も使います`); else { why.push(`${sd.label || '引上線'}: ${ttSHMS(at)}〜${ttSHMS(end)} に ${by.map(x => x.no).join('・') || 'ほかの列車'} が使う`); continue; } }
+        if (d && !enterFrom(d, sd, inA)) { if (s.sd != null && s.sd !== '') { uErr(t, `切り離し: ${d.no} が${sd.label || '引上線'}から出られません`); break; } continue; }
+        const v = { no: t.no, type: t.type, dest: t.dest, cars: 4, len: COUPLE_LEN, unit: true, cut: true, into: d, cplWith: t, tt: true, s: 0, g: null, prev: null, next: null, k0: 0,
+          names: [st], ev: [{ name: st, arr: t.ev[q].arr, dep: Math.floor(at / 60) }], route: r, sd: [GP, Math.max(GP + 1, r.total - (COUPLE_LEN + 1))],
+          A: [side === 'front' ? at : t.P[k], inA], P: [at, Math.max(end, inA + 5)], off: [], userSplit: s.mode };
+        v.start = v.A[0]; v.end = v.P[1]; units.push(v); reserve(sd.e, at, end, t);
+        if (d) { d.formed = [t]; d.vStart = 'split'; }
+        if (t.cpl && t.cpl.unit) t.cpl.t1 = side === 'front' ? at : t.P[k]; else { t.c12 = side === 'front' ? at : t.P[k]; t.c12side = side; }
+        t.splitDone = { st, side, mode: s.mode, sd: sd.e, at, d }; stat.userSplit = (stat.userSplit || 0) + 1; done = true; break;
+      }
+      if (!done && !(t.userErr || []).some(x => x.startsWith('切り離し'))) uErr(t, `切り離し: ${st}で切り離した4両を入れられる線がありません(${why.join(' / ') || '線がない'})`);
+    }
+  }
   function detach() {
     const sds = SIDINGS.get(CUT_ST) || [], cuts = [];
     for (const u of units.slice()) {
       const t = u.cplWith, c = t.cpl;
-      if (c.side !== 'front') continue;
+      if (u.cut || !c || c.side !== 'front' || t.splitDone) continue;   // 運用の編集で切り離しを決めた列車は、決めたとおりにする(切り離した4両そのものは飛ばす)
       const q = t.names.indexOf(CUT_ST);
       if (q <= c.i || q >= t.names.length - 1) continue;
       const k = q + t.k0, d0 = t.route.stopD[k] - 2, g = segAt(t.route, d0), L = g.d1 - g.d0, tp = g.t0 + (g.t1 - g.t0) * (L > 0 ? (d0 - g.d0) / L : 0);
@@ -1918,7 +2236,7 @@ function ttPlanner(useSiding) {
         const sp = span(t, i), by = whoAt(e, sp[0], sp[1], t);
         if (by.length) uConf(t, 'plat', t.names[i], e, sp[0], sp[1], by, `${t.names[i]}の指定の番線を ${ttSHMS(sp[0])}〜${ttSHMS(sp[1])} にほかの列車も使います`); } }
   }
-  const finish = () => { cplList.splice(0).forEach(addUnit); userEnds(); detach(); deadhead(); relink(); stay(); checkForced(); return units; };
+  const finish = () => { cplList.splice(0).forEach(addUnit); userEnds(); userSplits(); detach(); yard(); deadhead(); relink(); stay(); checkForced(); return units; };
   return { pre, plan, stat, units, finish, res };
 }
 
@@ -2069,7 +2387,7 @@ function ttFollow(act, T, lastT) {
   if (!snap) for (const t of act) {
     t.hold = false;
     const k = t.k0, s0 = t._s0;
-    if (t.unit || !t.sd || k + 1 >= t.A.length || !(T > t.P[k] && T < t.P[k] + HOLD_MAX) || Math.abs(s0 - t.sd[k]) > 0.6) continue;
+    if (t.unit || t.yard || !t.sd || k + 1 >= t.A.length || !(T > t.P[k] && T < t.P[k] + HOLD_MAX) || Math.abs(s0 - t.sd[k]) > 0.6) continue;
     const segs = t.route.segs, cur = segAt(t.route, Math.max(0, Math.min(t.route.total, s0))), fwd = new Set();
     for (const g of segs) { if (g.d1 < s0) continue; if (g.d0 > s0 + 70) break; if (g.e !== cur.e) fwd.add(g.e * 2 + g.d); }
     if (!fwd.size) continue;

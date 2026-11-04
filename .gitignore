@@ -14,3 +14,4 @@ build/ops_user.json
 *.orig
 *.before*
 node_modules/
+build/kq/

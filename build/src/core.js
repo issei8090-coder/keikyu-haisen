@@ -293,6 +293,40 @@ const SIDINGS = new Map();
     r.segs.slice(0, -1).forEach(g => { if (isNaN(stopX[g.e]) && edgeStation[g.e] < 0) E[g.e].dir = 0; });   // 引上線への出入りの線は両方向に使う
   });
 }
+// 検車区(車庫の線を1本ずつ使って、1日の始まり・終わりの列車を並べる駅)。車庫の線 = ホームから直接は行けず、ホームの先の引上線(hs)で折り返して入る行き止まり
+const YARD_ST = new Set(['西馬込', '神奈川新町', '金沢文庫']);
+// plat: 引上線を使わず、ホームで向きを変えて車庫の線と行き来する駅。box = 車庫の線の行き止まりがある範囲 [x0, y0, x1, y1]
+const YARD_CFG = { '金沢文庫': { box: [545, 450, 705, 516], plat: true } };
+const YARDS = new Map();
+function yardOf(name) {
+  if (YARDS.has(name)) return YARDS.get(name);
+  let Y = null; const s = stByName.get(name);
+  if (s && YARD_ST.has(name) && s.stops.length) {
+    const special = new Set(); D.portals.forEach(q => q.forEach(n => special.add(n))); D.exits.forEach(([n]) => special.add(n));
+    const pm = new Map(); s.stops.forEach(([e, x]) => pm.set(e, x)); pm.name = name;
+    const cx = s.cx, cy = s.ly, pos = (n, trim) => { const e = adj[n][0], atA = E[e].a === n, f = Math.min(0.95, trim / E[e].len); return { node: n, e, t: atA ? f : 1 - f, trim, set: new Set([n]), len: E[e].len }; };
+    const dead = []; N.forEach((q, n) => { if (adj[n].length === 1 && !special.has(n) && isNaN(stopX[adj[n][0]]) && Math.abs(q.x - cx) < 260 && Math.abs(q.y - cy) < 160) dead.push(n); });
+    const hs = [], rest = [], yc = YARD_CFG[name];
+    if (yc && yc.plat) {   // ホームで向きを変える検車区: 範囲の中の行き止まりが車庫の線
+      const [x0, y0, x1, y1] = yc.box, tracks = [];
+      for (const n of dead) { const q = N[n]; if (q.x < x0 || q.x > x1 || q.y < y0 || q.y > y1 || E[adj[n][0]].len < 12) continue; tracks.push({ node: n, e: adj[n][0], len: E[adj[n][0]].len, via: [], y: q.y }); }
+      tracks.sort((a, b) => b.y - a.y || a.node - b.node); tracks.forEach((t, i) => { t.i = i; t.label = '車庫' + (i + 1) + '番'; });
+      Y = tracks.length ? { name, hs: [], tracks, pos, plat: true, pm } : null;
+      YARDS.set(name, Y); return Y;
+    }
+    for (const n of dead) { const e = adj[n][0], r = findRoute({ e, t: E[e].a === n ? 0 : 1 }, [pm], null, null, false); if (!r.fail && r.total >= 60 && r.total <= 220) hs.push(Object.assign(pos(n, Math.min(8, E[e].len * 0.8)), { dist: r.total })); else if (r.fail || r.total > 220) rest.push(n); }
+    const tracks = [];
+    for (const n of rest) {
+      if (E[adj[n][0]].len < 12) continue;   // 短すぎる線(安全側線など)
+      const via = []; for (const h of hs) { const r = findRoute({ e: h.e, t: h.t }, [], new Set([n]), null, false); if (!r.fail && r.total <= 700) via.push(h); }
+      if (via.length) tracks.push({ node: n, e: adj[n][0], len: E[adj[n][0]].len, via, y: N[n].y });
+    }
+    tracks.sort((a, b) => a.y - b.y || a.node - b.node); tracks.forEach((t, i) => { t.i = i; t.label = '車庫' + (i + 1) + '番'; });
+    const used = new Set(tracks.flatMap(t => t.via)); Y = { name, hs: hs.filter(h => used.has(h)), tracks, pos };
+    if (!Y.hs.length || !tracks.length) Y = null;
+  }
+  YARDS.set(name, Y); return Y;
+}
 // opt: exitStart, exitEnd, startAt({e,t}), startExtra(startAtが駅の手前=引上線), after(終着後に向かう駅),
 //      tail(引上線), isFree(i, edge) → その時間帯に番線が空いているか
 // 本線の線路: 途中駅に止まらない列車が通る線。待避する列車はここを空ける
@@ -404,7 +438,7 @@ function buildTimedRoute_(names, longDwell, opt) {
   for (; i < maps.length; i++) if (!leg([cur], i)) return null;
   if (endSet) {
     const r = opt.tail ? findRoute(cur, [], endSet, opt.tailRev ? null : dir, false) : cachedRoute(cur, [], endSet, dir, endKey);   // 引上線へは向きを変えずに進む
-    if (!r.fail && opt.tail && (r.total > 150 || r.cost > r.total * 1.5 + (opt.tailRev ? 150 : 25))) return null;   // 遠すぎる線・逆線を渡り歩く線は引上線として使わない
+    if (!r.fail && opt.tail && (r.total > (opt.tailMax || 150) || r.cost > r.total * 1.5 + (opt.tailRev ? 150 : 25))) return null;   // tailMax: 検車区の引上線(ホームから遠い線もある)   // 遠すぎる線・逆線を渡り歩く線は引上線として使わない
     if (!r.fail) { const len = r.total - (opt.tail ? opt.tail.trim : 0); if (len > 1) push(cutAt(r, len), len); else return opt.tail ? null : { segs, total: off, stopD, stopE }; }
     else if (opt.tail) return null;
   }
