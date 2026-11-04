@@ -15,9 +15,10 @@ async function cloudInit() {
   if (!CLOUD_ON) { cloudMsg('ファイルを直接開いているので、編集はこのブラウザだけに保存します'); return; }
   fetch(CLOUD.api + '/healthz').catch(() => { });   // サーバーを起こしておく(保存のときに速い)
   const to = new Promise(r => setTimeout(() => r('to'), 4000));
-  const got = await Promise.race([Promise.all([cloudGet('ops_user.json'), cloudGet('disp_signals.json')]), to]);
+  const got = await Promise.race([Promise.all([cloudGet('ops_user.json'), cloudGet('disp_signals.json'), cloudGet('disp_layout.json')]), to]);
   if (got === 'to') { cloudMsg('保存先を読めませんでした(このブラウザの編集で動いています)', true); return; }
-  const [ops, sig] = got;
+  const [ops, sig, lay] = got;
+  if (lay && (lay.saved || 0) > ((D_LAYEDIT && D_LAYEDIT.saved) || 0)) { D_LAYEDIT = Object.assign({ st: {}, len: {} }, lay); try { localStorage.setItem(D_LAYKEY, JSON.stringify(D_LAYEDIT)); } catch (e) { } try { dRelayout([]); dTabs.forEach(dTabGeom); if (dView === 'disp') dBuildBoard(); } catch (e) { } }
   if (ops && (ops.saved || 0) > ((USER_OPS && USER_OPS.saved) || 0)) { USER_OPS = ops; try { localStorage.setItem('kq-opsuser', JSON.stringify(USER_OPS)); } catch (e) { } }
   if (sig && sig.list && (sig.saved || 0) > ((D_SIGMAN && D_SIGMAN.saved) || 0)) { D_SIGMAN = { saved: sig.saved, list: sig.list }; try { localStorage.setItem(D_SIGKEY, JSON.stringify(D_SIGMAN)); } catch (e) { } if (typeof dSigApply === 'function') try { dSigApply(null); } catch (e) { } }
   cloudMsg(cloudKey ? '編集は保存先(GitHub)に自動で保存されます' : '編集キーを入れると、編集を保存先(GitHub)に保存してほかの端末でも見られます');
@@ -32,7 +33,7 @@ function cloudPush(kind, data) {
     try {
       const r = await fetch(CLOUD.api + '/api/edits/' + kind, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Edit-Key': cloudKey }, body: JSON.stringify(data) });
       const j = await r.json().catch(() => ({}));
-      if (r.ok) cloudMsg(`保存しました(${hm(Math.floor((Date.now() / 1000 + 9 * 3600) % 86400 / 60))}、${kind === 'ops' ? '運用の編集' : '信号機の編集'})`);
+      if (r.ok) cloudMsg(`保存しました(${hm(Math.floor((Date.now() / 1000 + 9 * 3600) % 86400 / 60))}、${kind === 'ops' ? '運用の編集' : kind === 'layout' ? '配線の編集' : '信号機の編集'})`);
       else cloudMsg('保存できませんでした: ' + (j.error || r.status), true);
     } catch (e) { cloudMsg('保存先に届きませんでした(このブラウザには保存済み): ' + e.message, true); }
   }, 1500);

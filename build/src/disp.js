@@ -55,6 +55,12 @@ const dDot = (a, b) => { if (E[a >> 1].portal || E[b >> 1].portal) return 1; con
 // いまは段ごとに、(1) 隣の線へ渡る斜め線は横に layout.turnout m(線の間隔1つぶん。斜め線の縦の長さに比例)、(2) 行き止まりの引上線・留置線は列車が入る長さ以上(layout.siding m、区間ごとに sc.siding)、
 // (3) 残り(ふつうの線)で駅と駅のキロ程の差を埋める。足りないときは (1)(2) を同じ割合で縮める。端の外側(終点の先)は (1)(2) をそのまま使う。
 const D_LAY = Object.assign({ turnout: 45, siding: 236, fmin: 2, endMax: 12 }, DC.layout || {});
+// 画面で直した配線(運転指令の「配線を編集」): st = { 駅名: { km, len(m) } }、len = { 線の鍵: 長さ(m) }。線の鍵は両端の点の図の座標(作り直しても変わらないように)
+const D_LAYKEY = 'kq-disp-layout';
+let D_LAYEDIT = { saved: 0, st: {}, len: {} };
+try { const j = JSON.parse(localStorage.getItem(D_LAYKEY) || 'null'); if (j && j.saved) D_LAYEDIT = Object.assign({ st: {}, len: {} }, j); } catch (e) { }
+const dEdgeKey = e => { const a = N[E[e].a], b = N[E[e].b]; return [a.x.toFixed(1) + ',' + a.y.toFixed(1), b.x.toFixed(1) + ',' + b.y.toFixed(1)].sort().join('~'); };
+const dStDef = new Map();   // 駅の元の値(cfg)
 function dRowLayout(sc, r, nrow, A) {
   if (!A || A.length < 2) return null;
   const xs = []; N.forEach((p, n) => { if (nrow[n] === r && adj[n].length) xs.push(p.x); });
@@ -84,9 +90,12 @@ function dRowLayout(sc, r, nrow, A) {
     if (x1 - x0 < 0.3) return;
     cover(x0, x1, sid / 1000 / (x1 - x0)); dead.push([x0, x1]);
   });
+  // 画面で長さを指定した線: その長さちょうど(斜め線・引上線の決まりより優先)
+  const reqX = new Float64Array(nI);
+  for (const e of rowE) { const m = D_LAYEDIT.len[dEdgeKey(e)]; if (!(m > 0)) continue; const dx = dxOf(e); if (dx < 0.3) continue; cover(N[E[e].a].x, N[E[e].b].x, m / 1000 / dx, reqX); }
   // 目印(駅のホームの端・段の切れ目)の間を埋める
   const fmin = D_LAY.fmin / 1000, dens = new Float64Array(nI).fill(NaN), Aa = A.map(a => [idx(a[0]), a[1]]).sort((p, q) => p[0] - q[0]);
-  const fill = [], dv = (k, f) => reqD[k] > 0 ? Math.max(reqD[k], req[k]) : Math.max(req[k], f);   // 斜め線のかかる所は決めた長さちょうど(駅間が長くても伸ばさない)
+  const fill = [], dv = (k, f) => reqX[k] > 0 ? reqX[k] : reqD[k] > 0 ? Math.max(reqD[k], req[k]) : Math.max(req[k], f);   // 斜め線のかかる所は決めた長さちょうど(駅間が長くても伸ばさない)
   for (let q = 0; q + 1 < Aa.length; q++) {
     const [i0, k0] = Aa[q], [i1, k1] = Aa[q + 1]; if (i1 <= i0) continue;
     const K = Math.max(1e-4, k1 - k0), g = f => { let s = 0; for (let k = i0; k < i1; k++) s += dv(k, f) * w[k]; return s; };
@@ -108,18 +117,30 @@ function dRowLayout(sc, r, nrow, A) {
   return { X, K, d0, d1, sp, dead };
 }
 function dInit() {
+  dSecOf.fill(-1); dKm.fill(NaN); dBy.fill(NaN); DSEC.length = 0; dSucc.clear(); dSuccP.clear(); sigByDe.clear(); SIGS.length = 0;   // 配線を直したときにやり直せるように
   // 1) 区間ごとに: 段の割り当て・駅のホームの端(目印)・同じ区間の段の切れ目
   const SI = DC.sections.map((sc, si) => {
     const inR = (q, x, y) => x >= q[0] && x <= q[1] && y >= q[2] && y <= q[3];
     const rowOf = (x, y) => sc.rows.findIndex(r => r.rects.some(q => inR(q, x, y)));
     const nrow = N.map((p, n) => adj[n].length ? rowOf(p.x, p.y) : -1);
     const anc = sc.rows.map(() => []), stInfo = new Map();
-    for (const [nm, km, c] of sc.stations) {
+    for (const [nm, km0, c] of sc.stations) {
       const s = stByName.get(nm); if (!s || !s.stops.length) continue;
-      const len = c <= 30 ? c * DTR.carLen : c;   // 両数(18m × 両数)か m
+      const len0 = c <= 30 ? c * DTR.carLen : c;   // 両数(18m × 両数)か m
+      dStDef.set(nm, { km: km0, len: len0 });
+      const o = D_LAYEDIT.st[nm], km = o && isFinite(o.km) ? o.km : km0, len = o && o.len > 0 ? o.len : len0;   // 画面で直した値
       const r = nrow[E[s.stops[0][0]].a]; if (r < 0) continue;
-      const ps = s.plats.length ? s.plats : [[s.cx, 0, s.cx, 0]], x0 = Math.min(...ps.map(p => p[0])), x1 = Math.max(...ps.map(p => p[2])), h = len / 2000;
-      anc[r].push([x0, km - h], [x1, km + h]); stInfo.set(nm, { km, len, x0, x1, row: r });
+      const ps = s.plats.length ? s.plats : [[s.cx, 0, s.cx, 0]], px0 = Math.min(...ps.map(p => p[0])), px1 = Math.max(...ps.map(p => p[2])), h = len / 2000;
+      // 目印はホームの四角形の端ではなく、列車が止まる点を中心にする(元の図では止まる点と四角形が100m以上離れて描かれている駅がある: 大門・三田・五反田など)
+      //   止まる点は線(エッジ)の途中にあり、エッジの中のキロ程は両端の点から一直線に決まるので、目印はそのエッジの両端に置く(止まる点がちょうど駅のキロ程になるように)
+      const sx = s.stops.filter(([e]) => !E[e].portal && nrow[E[e].a] === r && nrow[E[e].b] === r).map(([e, x]) => ({ e, x })).sort((p, q) => p.x - q.x);
+      let best = [], cur = []; for (const q of sx) { if (cur.length && q.x - cur[cur.length - 1].x > 6) cur = []; cur.push(q); if (cur.length > best.length) best = cur.slice(); }
+      const w = Math.max(2, px1 - px0); let xc = (px0 + px1) / 2, x0 = px0, x1 = px1;
+      if (best.length) {
+        const q = best[0], a = E[q.e].a, b = E[q.e].b, xa = Math.min(N[a].x, N[b].x), xb = Math.max(N[a].x, N[b].x), dxE = Math.max(1e-6, xb - xa), f = (q.x - xa) / dxE, Lp = 2 * h * dxE / w;
+        xc = q.x; x0 = xa; x1 = xb; anc[r].push([xa, km - f * Lp], [xb, km + (1 - f) * Lp]);
+      } else anc[r].push([px0, km - h], [px1, km + h]);
+      stInfo.set(nm, { km, len, x0, x1, xc, row: r });
     }
     anc.forEach(a => a.sort((p, q) => p[0] - q[0]));
     // 段の切れ目(※ の接続): 前の段の右端と次の段の左端に、駅間の距離を図上の長さで按分したキロ程を置く
@@ -172,11 +193,17 @@ function dInit() {
       return k0 + (k1 - k0) * (x - x0) / Math.max(1e-6, x1 - x0);
     };
     N.forEach((p, n) => { if (nrow[n] >= 0) { dKm[n] = kmAt(nrow[n], p.x); dBy[n] = p.y + sc.rows[nrow[n]].dy; } });
+    // ホームの四角形ごとの位置: その四角形に接する線で列車が止まる点を中心に(京急蒲田の空港線側のように、駅の中心から離れた所に止まる線もある)
+    for (const [nm, info] of stInfo) { const s = stByName.get(nm);
+      const st = s.stops.filter(([e]) => !E[e].portal && nrow[E[e].a] === info.row && nrow[E[e].b] === info.row).map(([e, x]) => { const f = paramOf(e, x), a = E[e].a, b = E[e].b; return { x, y: N[a].y + (N[b].y - N[a].y) * f, km: dKm[a] + (dKm[b] - dKm[a]) * f }; });
+      info.pk = s.plats.map(p => { const c = st.filter(q => q.y >= p[1] - 7 && q.y <= p[3] + 7).sort((u, v) => u.x - v.x); if (!c.length) return [info.km];   // 四角形ごとに、止まる点のかたまり(x が6以内)ごとの中心
+        const out = []; let g = []; const flush = () => { if (g.length) out.push(g.reduce((a, q) => a + q.km, 0) / g.length); g = []; };
+        for (const q of c) { if (g.length && q.x - g[g.length - 1].x > 6) flush(); g.push(q); } flush(); return out; }); }
     for (const [n, y] of Object.entries(sc.byFix || {})) if (nrow[+n] >= 0) dBy[+n] = y + sc.rows[nrow[+n]].dy;   // 画面だけの縦位置の手直し(点の番号: 図の y)。長さの計算は元の図の y のまま
     const edges = [];
     E.forEach((e, i) => { if (nrow[e.a] >= 0 && nrow[e.b] >= 0 && (e.portal || nrow[e.a] === nrow[e.b])) { dSecOf[i] = si; edges.push(i); } });
     const bnd = new Set(); edges.forEach(i => [E[i].a, E[i].b].forEach(n => { if (adj[n].some(f => dSecOf[f] !== si)) bnd.add(n); }));
-    DSEC.push({ sc, id: sc.id, name: sc.name, edges, stInfo, bnd, tabs: sc.tabs, vmax: sc.vmax });
+    DSEC.push({ sc, id: sc.id, name: sc.name, edges, stInfo, bnd, tabs: sc.tabs, vmax: (D_LAYEDIT.vmax && D_LAYEDIT.vmax[sc.id]) || sc.vmax });   // 速度制限は画面で直したものがあればそちら
     S.done = true;
   });
   E.forEach((e, i) => {
@@ -1113,11 +1140,20 @@ function dDefAsp(s) {
 dInit(); dSigCheck();
 // シーサスクロッシング: 区間のエッジのうち、ノードを共有せずに図の上で交わる組(立体交差の印 over は除く)。交差点を仮のノード(N.length + 番号)にする
 const D_XBY = new Map();
-{ const se = []; for (let e = 0; e < NE; e++) if (dSecOf[e] >= 0 && !E[e].portal) se.push(e); let id = 0;
+function dBuildXby() { D_XBY.clear(); const se = []; for (let e = 0; e < NE; e++) if (dSecOf[e] >= 0 && !E[e].portal) se.push(e); let id = 0;
   for (let i = 0; i < se.length; i++) for (let j = i + 1; j < se.length; j++) { const a = E[se[i]], b = E[se[j]]; if (a.over || b.over || a.a === b.a || a.a === b.b || a.b === b.a || a.b === b.b) continue;
     const p1 = N[a.a], p2 = N[a.b], q1 = N[b.a], q2 = N[b.b], d = (p2.x - p1.x) * (q2.y - q1.y) - (p2.y - p1.y) * (q2.x - q1.x); if (Math.abs(d) < 1e-9) continue;
     const u = ((q1.x - p1.x) * (q2.y - q1.y) - (q1.y - p1.y) * (q2.x - q1.x)) / d, v = ((q1.x - p1.x) * (p2.y - p1.y) - (q1.y - p1.y) * (p2.x - p1.x)) / d; if (!(u > 0.001 && u < 0.999 && v > 0.001 && v < 0.999)) continue;
     const n = N.length + id++; for (const [e, f] of [[se[i], u], [se[j], v]]) { if (!D_XBY.has(e)) D_XBY.set(e, []); D_XBY.get(e).push({ n, u: f * dEm[e] }); } } }
+dBuildXby();
+// 画面で配線(長さ・キロ程)を直したとき: 図と長さを作り直す。走っている列車は図の上の同じ位置から続ける(運転の秒の割り振り dRetime は次に開いたときに直る)
+function dRelayout(list) {
+  const keep = []; for (const t of list || []) if (t.ph && t.dp) keep.push([t, t.ph, t.dp.m2s(t.ph.m)]);
+  dInit(); dBuildXby(); dSigCheck();
+  for (const t of list || []) { t.ph = null; t.dLocks = null; t.dStill = false; t.dp = null; t._occL = null; }
+  D_LOCK.clear(); D_LOCKN.clear(); if (list && list.length) dSpawnQ(list);
+  for (const [t, o, s] of keep) { const dp = dPrep(t); o.m = dp.s2m(s); const rg = dp.ranges.find(r => o.m >= r.m0 - 0.01 && (o.m < r.m1 || (r.i1 === t.route.segs.length && o.m <= r.m1 + 1))); if (rg) dStart(t, D_NOW, rg, o); }
+}
 // ===== 時刻表運転とのつなぎ =====
 let D_LOG = null;   // 検査用: 着いた・区間を出た記録
 // この列車を今出すか。区間内で遅れている列車は、時刻表の終わりを過ぎても着くまで走り続ける。同じ車両の次の列車はそれまで出さない

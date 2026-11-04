@@ -5,8 +5,8 @@
 const http = require('http'), crypto = require('crypto');
 const { GITHUB_TOKEN, EDIT_KEY, EDIT_KEY_SHA256, REPO = 'issei8090-coder/keikyu-haisen', BRANCH = 'main', ALLOWED_ORIGIN = '*' } = process.env;
 const PORT = process.env.PORT || 10000;
-const FILES = { ops: 'data/ops_user.json', signals: 'data/disp_signals.json' };
-const LABEL = { ops: '運用の編集', signals: '信号機の編集' };
+const FILES = { ops: 'data/ops_user.json', signals: 'data/disp_signals.json', layout: 'data/disp_layout.json' };
+const LABEL = { ops: '運用の編集', signals: '信号機の編集', layout: '配線の編集' };
 const MAX = 4 * 1024 * 1024;
 // 編集キーの照合: EDIT_KEY(そのもの)か EDIT_KEY_SHA256(キーの SHA-256。render.yaml に書けるので Render の画面で入れなくてよい)
 const keyOK = k => !!k && ((EDIT_KEY && k === EDIT_KEY) || (EDIT_KEY_SHA256 && crypto.createHash('sha256').update(String(k)).digest('hex') === EDIT_KEY_SHA256));
@@ -68,7 +68,7 @@ http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, {});
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) return sendPage(req, res);
     if (url.pathname === '/healthz') return send(res, 200, { ok: true, token: !!GITHUB_TOKEN, key: !!(EDIT_KEY || EDIT_KEY_SHA256) });
-    const m = /^\/api\/edits\/(ops|signals)$/.exec(url.pathname);
+    const m = /^\/api\/edits\/(ops|signals|layout)$/.exec(url.pathname);
     if (req.method === 'GET' && m) { const f = await readFile(m[1]); return send(res, 200, { data: f.data }); }
     if (req.method === 'POST' && url.pathname === '/api/check') { const ok = keyOK(req.headers['x-edit-key']); return send(res, ok ? 200 : 403, { ok }); }
     if (req.method === 'PUT' && m) {

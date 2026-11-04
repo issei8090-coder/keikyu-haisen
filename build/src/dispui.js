@@ -1,6 +1,7 @@
 // ===== 運転指令の画面: 区間ごとの実距離配線図(信号機・在線・進路) =====
 const board = $('board');
 let dTab = 0, dSel = null, dSelSig = null, dView = 'map', dDrawT = 0;
+let dLay = false, dLaySel = null;   // 配線の編集中・選んだ線か駅
 const D_KMPX = 420, D_YS = 6.6, D_TOP = 72;   // D_TOP: 駅名の下に、上側の信号機・列車の札が入る余白
 const ASP_COL = { R: ['#ff3b30'], KD: ['#f2f2f2'], YY: ['#ffcc00', '#ffcc00'], Y: ['#ffcc00'], YG: ['#ffcc00', '#2ee66b'], YGF: ['#ffcc00', '#2ee66b'], G: ['#2ee66b'], SH: ['#f2f2f2'] };
 const ASP_NAME = { R: '停止', KD: '誘導', YY: '警戒', Y: '注意', YG: '減速', YGF: '抑速', G: '進行', SH: '入換進行' };
@@ -30,13 +31,17 @@ function dBuildBoard() {
     if (major) el('text', { x, y: tb.H - 8, class: 'bk-km' }, gB.static, (sec.sc.kmNeg ? Math.abs(k) : k).toFixed(1) + 'km');   // kmNeg: キロ程の符号を反転して載せた区間(都営浅草線)
   }
   el('line', { x1: tb.X(tb.km0), y1: tb.H - 30, x2: tb.X(tb.km1), y2: tb.H - 30, class: 'bk-tick' }, gB.static);
+  // 速度制限の帯(線区の最高速度より低いところ)
+  for (const P of tb.parts) { const V = DSEC[P.si].vmax || [], top = Math.max(...V.map(v => v[2]), 0);
+    for (const [k0, k1, v, note] of V) { if (v >= top || k1 < P.km0 || k0 > P.km1) continue; const a = tb.X(Math.max(k0, P.km0), P.si), b = tb.X(Math.min(k1, P.km1), P.si);
+      const g = el('g', { class: 'bk-vmax' + (v <= 45 ? ' lo' : '') }, gB.static); el('rect', { x: a, y: tb.H - 44, width: Math.max(2, b - a), height: 9, rx: 2 }, g); if (b - a > 22) el('text', { x: (a + b) / 2, y: tb.H - 36.6 }, g, v); el('title', {}, g, `${v}km/h ${note || ''}`); } }
   // ホームと駅名
   for (const P of tb.parts) { const sec = DSEC[P.si]; for (const [nm, info] of sec.stInfo) {
     if (info.km + info.len / 2000 < P.km0 || info.km - info.len / 2000 > P.km1) continue;
     const s = stByName.get(nm), dy = sec.sc.rows[info.row].dy, x0 = tb.X(info.km - info.len / 2000, P.si), x1 = tb.X(info.km + info.len / 2000, P.si);
     let top = Infinity;
-    for (const p of s.plats) { const y0 = tb.Y(p[1] + dy, P.si), y1 = tb.Y(p[3] + 1 + dy, P.si); top = Math.min(top, y0); el('rect', { x: x0, y: y0 + 3, width: x1 - x0, height: Math.max(3, y1 - y0 - 6), class: 'bk-plat' }, gB.static); }
-    el('text', { x: (x0 + x1) / 2, y: 18, class: 'bk-st' }, gB.static, nm);
+    s.plats.forEach((p, i) => { for (const k of (info.pk && info.pk[i]) || [info.km]) { const px0 = tb.X(k - info.len / 2000, P.si), px1 = tb.X(k + info.len / 2000, P.si), y0 = tb.Y(p[1] + dy, P.si), y1 = tb.Y(p[3] + 1 + dy, P.si); top = Math.min(top, y0); el('rect', { x: px0, y: y0 + 3, width: px1 - px0, height: Math.max(3, y1 - y0 - 6), class: 'bk-plat' }, gB.static); } });   // 線によって止まる点が離れている駅(京急蒲田の空港線側など)は、それぞれの所に
+    { const tx = el('text', { x: (x0 + x1) / 2, y: 18, class: 'bk-st' + (dLay ? ' lay' : '') + (dLaySel && dLaySel.st === nm ? ' laysel' : '') }, gB.static, nm); if (dLay) tx.addEventListener('click', ev => { ev.stopPropagation(); dLaySel = { st: nm, si: P.si }; dBuildBoard(); }); }
     el('text', { x: (x0 + x1) / 2, y: 31, class: 'bk-stkm' }, gB.static, (sec.sc.kmNeg ? Math.abs(info.km) : info.km).toFixed(1) + 'km');
   } }
   // 線路
@@ -53,6 +58,8 @@ function dBuildBoard() {
     d += `M${tb.X(dKm[na], sa).toFixed(1)} ${tb.Y(dBy[na], sa).toFixed(1)}L${tb.X(dKm[nb], sb).toFixed(1)} ${tb.Y(dBy[nb], sb).toFixed(1)}`;
   }
   el('path', { d, class: 'bk-track' }, gB.static);
+  if (dLay && dLaySel && dLaySel.e != null) { const e = dLaySel.e, a = E[e].a, b = E[e].b, si = dSecOf[e]; if (dPart(tb, si)) el('path', { d: `M${tb.X(dKm[a], si).toFixed(1)} ${tb.Y(dBy[a], si).toFixed(1)}L${tb.X(dKm[b], si).toFixed(1)} ${tb.Y(dBy[b], si).toFixed(1)}`, class: 'bk-laysel' }, gB.static); }
+  if (dLay) for (const P of tb.parts) for (const e of DSEC[P.si].edges) { if (E[e].portal || !(D_LAYEDIT.len[dEdgeKey(e)] > 0)) continue; const a = E[e].a, b = E[e].b; el('path', { d: `M${tb.X(dKm[a], P.si).toFixed(1)} ${tb.Y(dBy[a], P.si).toFixed(1)}L${tb.X(dKm[b], P.si).toFixed(1)} ${tb.Y(dBy[b], P.si).toFixed(1)}`, class: 'bk-layset' }, gB.static); }
   // はめ込んだ部分で途中で切れている線の行き先(inc の ends: { hi: 右の端, lo: 左の端 })
   for (const P of tb.parts) { if (!P.ends) continue; for (const side of ['lo', 'hi']) { const txt = P.ends[side]; if (!txt) continue;
     const kB = side === 'hi' ? P.km1 : P.km0, ys = [];
@@ -77,7 +84,7 @@ function dBuildBoard() {
     const g = el('g', { class: 'bk-locw', transform: `translate(${tb.X(w.km, w.sec).toFixed(1)} ${(tb.Y(w.by, w.sec) + (w.down ? -9 : 9)).toFixed(1)})` }, gB.sig);
     el('circle', { r: 5.5 }, g); el('text', { y: 3.5 }, g, '!'); el('title', {}, g, w.msg);
   }
-  board.classList.toggle('editing', dEdit);
+  board.classList.toggle('editing', dEdit); board.classList.toggle('laying', dLay);
   document.querySelectorAll('#btabs button').forEach((b, i) => b.classList.toggle('on', i === dTab));
   dSigBar();
   dDraw(true);
@@ -292,6 +299,7 @@ function dSelectSig(s) { dSelSig = s; dSel = null; dDraw(true); }
 // 右側の運転指令パネル
 function dPanel() {
   const box = $('dispbox'); if (!box) return;
+  if (dLay) { dLayPanel(box); return; }
   const t = dSel && dSel.g ? dSel : null, s = dSelSig;
   let h = '';
   if (t) {
@@ -415,6 +423,7 @@ function dPick(ev, dn) {
 }
 board.addEventListener('click', ev => {
   if (dDragJust) return;
+  if (dLay) { const e = dPickE(ev); dLaySel = e != null ? { e } : null; dBuildBoard(); return; }
   if (dEdit) {
     const p = dPick(ev, dEdDn); if (!p) { dSigMsg('近くに' + (dEdDn ? '下り' : '上り') + '方向に走れる線路がありません'); return; }
     // すでにある信号機の近く(同じ線・同じ向きで8m以内)なら、同じ位置に重ねて置く(進路ごとに並べる信号機)
@@ -445,7 +454,9 @@ window.addEventListener('keydown', ev => {
 function dSigBar() {
   const bar = $('sigbar'); if (!bar) return;
   const si = dTabs[dTab].si, id = DSEC[si].id, L = D_SIGMAN && D_SIGMAN.list[id], n = SIGS.filter(s => s.sec === si).length;
-  let h = `<button id="sgedit" class="${dEdit ? 'on' : ''}">${dEdit ? '編集を終わる' : '信号機を編集'}</button>`;
+  let h = `<button id="sgedit" class="${dEdit ? 'on' : ''}">${dEdit ? '編集を終わる' : '信号機を編集'}</button><button id="layedit" class="${dLay ? 'on' : ''}">${dLay ? '配線の編集を終わる' : '配線を編集'}</button>`;
+  if (dLay) { const nL = Object.keys(D_LAYEDIT.len).length, nS = Object.keys(D_LAYEDIT.st).length;
+    h += `<span class="sg-st">線路を押すと長さ、駅名を押すとキロ程・ホームの長さを直せます。直した線は黄色。いま 線${nL}本・駅${nS}駅</span><span class="sg-grp"><button id="layexp">書き出す</button><button id="layimp">読み込む</button><button id="layclr" class="danger">全部元に戻す</button></span>`; }
   h += `<span class="sg-st">${L ? `手で置いた信号機 ${n}基` + (L.some(x => x.est) ? `(うち推定の位置のまま ${L.filter(x => x.est).length}基)` : '') : `推定の信号機 ${n}基`}</span>`;
   if (dEdit) {
     h += `<span class="sg-grp"><span>置く種類</span>${SIG_KINDS.map(k => `<button data-ek="${k}" class="${k === dEdKind ? 'on' : ''}">${k}</button>`).join('')}</span>` +
@@ -456,7 +467,15 @@ function dSigBar() {
   if (dEdit) { const n1 = SIGS.filter(x => x.sec === si && D_SIGWARN.has(x)).length, n2 = D_LOCWARN.filter(w => w.sec === si).length; h += `<span class="sg-st" style="color:${n1 + n2 ? '#ff8a7a' : '#7fd18b'}">確かめ: ${n1 + n2 ? `! ${n1}基・分岐${n2}か所` : 'なし'}</span>`; }
   h += `<span id="sigmsg">${dEdMsg}</span>`;
   bar.innerHTML = h;
-  $('sgedit').onclick = () => { dEdit = !dEdit; dSigMsg(''); dBuildBoard(); };
+  $('sgedit').onclick = () => { dEdit = !dEdit; if (dEdit) { dLay = false; dLaySel = null; } dSigMsg(''); dBuildBoard(); };
+  $('layedit').onclick = () => { dLay = !dLay; dLaySel = null; if (dLay) dEdit = false; dSigMsg(''); dBuildBoard(); };
+  if (dLay) {
+    $('layexp').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(D_LAYEDIT, null, 1)], { type: 'application/json' })); a.download = 'disp_layout.json'; a.click(); dSigMsg('disp_layout.json を書き出しました'); };
+    $('layimp').onclick = () => { const f = document.createElement('input'); f.type = 'file'; f.accept = '.json,application/json';
+      f.onchange = () => { const r = new FileReader(); r.onload = () => { try { const j = JSON.parse(r.result); if (!j.st && !j.len) throw 0; D_LAYEDIT = Object.assign({ st: {}, len: {} }, j); dLayApply('読み込みました'); } catch (e) { dSigMsg('読み込めませんでした(disp_layout.json の形ではありません)'); } }; r.readAsText(f.files[0]); };
+      f.click(); };
+    $('layclr').onclick = () => { if (!confirm('画面で直した配線の長さ・駅のキロ程を全部元に戻しますか?')) return; D_LAYEDIT = { saved: 0, st: {}, len: {} }; dLayApply('全部元に戻しました'); };
+  }
   if (!dEdit) return;
   bar.querySelectorAll('[data-ek]').forEach(b => b.onclick = () => { dEdKind = b.dataset.ek; dSigBar(); });
   bar.querySelectorAll('[data-ed]').forEach(b => b.onclick = () => { dEdDn = +b.dataset.ed; dSigBar(); });
@@ -484,3 +503,89 @@ function dSetView(v) {
 $('vmap').onclick = () => dSetView('map'); $('vdisp').onclick = () => dSetView('disp');
 $('dispon').onchange = () => { dispOn = $('dispon').checked; };
 if (location.hash.includes('disp')) dSetView('disp');
+
+// ===== 配線の編集(長さ・駅のキロ程・ホームの長さ) =====
+function dPickE(ev) {   // 押した所にいちばん近い線(向きは問わない)
+  const tb = dTabs[dTab], pt = board.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
+  const q = pt.matrixTransform(board.getScreenCTM().inverse()); let best = null, bd = 12;
+  for (const P of tb.parts) for (const e of DSEC[P.si].edges) {
+    if (E[e].portal) continue; const a = E[e].a, b = E[e].b; if (Math.max(dKm[a], dKm[b]) < P.km0 - 0.05 || Math.min(dKm[a], dKm[b]) > P.km1 + 0.05) continue;
+    const ax = tb.X(dKm[a], P.si), ay = tb.Y(dBy[a], P.si), dx = tb.X(dKm[b], P.si) - ax, dy = tb.Y(dBy[b], P.si) - ay, L2 = dx * dx + dy * dy; if (L2 < 1e-6) continue;
+    const f = Math.max(0, Math.min(1, ((q.x - ax) * dx + (q.y - ay) * dy) / L2)), dd = Math.hypot(ax + dx * f - q.x, ay + dy * f - q.y);
+    if (dd < bd) { bd = dd; best = e; }
+  }
+  return best;
+}
+function dLaySave() { D_LAYEDIT.saved = Date.now(); try { localStorage.setItem(D_LAYKEY, JSON.stringify(D_LAYEDIT)); } catch (e) { } if (typeof cloudPush === 'function') cloudPush('layout', D_LAYEDIT); }
+function dLayApply(msg) {
+  dLaySave(); dRelayout(typeof ttList !== 'undefined' ? ttList : []); dTabs.forEach(dTabGeom);
+  if (typeof ttActive !== 'undefined') dSigShow(ttActive || []);
+  dSigMsg(msg || ''); dBuildBoard();
+}
+// 線の種類(説明用)
+function dEdgeKind(e) {
+  const a = E[e].a, b = E[e].b, dy = Math.abs(N[b].y - N[a].y), dead = adj[a].length === 1 || adj[b].length === 1, plat = !isNaN(stopX[e]);
+  return plat ? 'ホームの線' : dy >= 0.5 ? 'ポイント・渡り線(斜めの線)' : dead ? '行き止まりの線(引上線・留置線・車庫)' : '線路';
+}
+function dLayPanel(box) {
+  let h = '<div class="dp-title">配線を編集</div>', key = 'none';
+  const S = dLaySel;
+  if (S && S.e != null) {
+    const e = S.e, k = dEdgeKey(e), set = D_LAYEDIT.len[k], a = E[e].a, b = E[e].b, sec = DSEC[dSecOf[e]];
+    const near = [...sec.stInfo].map(([nm, i]) => [nm, Math.abs(i.km - (dKm[a] + dKm[b]) / 2)]).sort((p, q) => p[1] - q[1])[0];
+    key = 'e' + e + '|' + dEm[e].toFixed(1) + '|' + set;
+    h += `<div class="dp-sub">${sec.name}・${dEdgeKind(e)}・${near ? near[0] + ' 付近' : ''}</div>` +
+      `<table class="dp-tab"><tr><th>いまの長さ</th><td><b>${Math.round(dEm[e])}</b> m</td></tr><tr><th>キロ程</th><td>${Math.min(dKm[a], dKm[b]).toFixed(3)}〜${Math.max(dKm[a], dKm[b]).toFixed(3)} km</td></tr>` +
+      `<tr><th>指定</th><td>${set ? set + ' m(手で指定)' : 'なし(自動: 斜めの線は線の間隔1つで' + D_LAY.turnout + 'm、行き止まりは列車が入る長さ、ほかは駅間の残り)'}</td></tr></table>` +
+      (Math.abs(N[b].x - N[a].x) < 0.3 ? '<p class="dp-sub" style="color:#ff8a7a">この線は元の図で真縦なので、長さを指定できません</p>' :
+      `<div class="se-row"><span>長さ</span><input id="laylen" type="number" min="1" step="1" value="${Math.round(set || dEm[e])}"> m <button id="layok">決める</button>${set ? '<button id="laydel">指定をやめる</button>' : ''}</div>` +
+      `<div class="se-row"><span>足す</span>${[-50, -10, 10, 50].map(d => `<button data-ld="${d}">${d > 0 ? '+' : ''}${d}m</button>`).join('')}</div>` +
+      (set && Math.abs(set - dEm[e]) > 2 ? `<p class="dp-sub" style="color:#ffcc66">指定 ${set}m が駅と駅のキロ程の間に収まらないので、${Math.round(dEm[e])}m に縮めています(駅のキロ程か、ほかの線の長さを見直してください)</p>` : '') +
+      '<p class="dp-sub">長さを変えると、駅のキロ程はそのままで、同じ駅間のほかのふつうの線が伸び縮みします。運転の計算(距離)もこの長さになります。</p>');
+  } else if (S && S.st) {
+    const nm = S.st, info = DSEC[S.si].stInfo.get(nm), df = dStDef.get(nm) || {}, o = D_LAYEDIT.st[nm];
+    key = 'st' + nm + '|' + JSON.stringify(o || {}) + info.km + info.len;
+    h += `<div class="dp-sub">${DSEC[S.si].name}・${nm}</div>` +
+      `<div class="se-row"><span>キロ程</span><input id="laykm" type="number" step="0.01" value="${(DSEC[S.si].sc.kmNeg ? -info.km : info.km).toFixed(3)}"> km <span class="dp-sub">(元 ${(DSEC[S.si].sc.kmNeg ? -df.km : df.km).toFixed(3)})</span></div>` +
+      `<div class="se-row"><span>ホーム</span><input id="laypl" type="number" min="18" step="1" value="${Math.round(info.len)}"> m <span class="dp-sub">(${(info.len / DTR.carLen).toFixed(1)}両ぶん・元 ${df.len}m)</span></div>` +
+      `<div class="se-row"><span>両数で</span>${[4, 6, 8, 10, 12].map(n => `<button data-lc="${n}">${n}両</button>`).join('')}</div>` +
+      `<div class="btns"><button id="layst">決める</button>${o ? '<button id="laystdel">元に戻す</button>' : ''}</div>` +
+      '<p class="dp-sub">キロ程は駅の中心(列車が止まる点)。ホームの長さを変えると、出発信号機の推定の位置と止まる位置も変わります。</p>';
+  } else {
+    h += '<p class="dp-sub">図の線路を押すとその線の長さ、上の駅名を押すと駅のキロ程とホームの長さを直せます。直した線は黄色で示します。</p>';
+    const si = dTabs[dTab].si, sec = DSEC[si], neg = !!sec.sc.kmNeg, V = (sec.vmax || []).map(r => r.slice()), own = !!(D_LAYEDIT.vmax && D_LAYEDIT.vmax[sec.id]);
+    const dk = k => (neg ? -k : k);   // 画面のキロ程(浅草線は符号を戻す)
+    key = 'vmax' + si + JSON.stringify(V);
+    h += `<h2 style="margin-top:10px">速度制限(${sec.name})</h2><p class="dp-sub">${own ? '画面で直した値' : '設定ファイルの値(推定を含む)'}。図の下の帯がこの表です。km/h は線区の最高速度より低い所だけ帯になります。</p>` +
+      `<table class="dp-tab lay-vm"><tr><th>から</th><th>まで</th><th>km/h</th><th>メモ</th><th></th></tr>` +
+      V.map((r, i) => { const a = dk(r[0]), b = dk(r[1]), lo = Math.min(a, b), hi = Math.max(a, b);
+        return `<tr data-vr="${i}"><td><input type="number" step="0.01" value="${lo.toFixed(3)}"></td><td><input type="number" step="0.01" value="${hi.toFixed(3)}"></td><td><input type="number" step="5" min="5" value="${r[2]}"></td><td><input type="text" value="${(r[3] || '').replace(/"/g, '&quot;')}"></td><td><button data-vdel="${i}" class="danger" title="この行を消す">×</button></td></tr>`; }).join('') +
+      `</table><div class="btns"><button id="vadd">行を足す</button><button id="vok">決める</button>${own ? '<button id="vreset">設定ファイルの値に戻す</button>' : ''}</div>`;
+  }
+  const L = Object.entries(D_LAYEDIT.len), T = Object.entries(D_LAYEDIT.st);
+  h += `<h2 style="margin-top:12px">直したところ</h2>` + (L.length + T.length ? '<ul class="dp-ev">' + T.map(([nm, o]) => `<li><a href="#" data-lsn="${nm}">${nm}</a> ${o.km != null ? 'キロ程 ' + o.km : ''} ${o.len ? 'ホーム ' + o.len + 'm' : ''}</li>`).join('') +
+    L.map(([k, m]) => { let e = -1; for (let i = 0; i < E.length; i++) if (dSecOf[i] >= 0 && !E[i].portal && dEdgeKey(i) === k) { e = i; break; } return `<li>${e >= 0 ? `<a href="#" data-lse="${e}">線 ${dKm[E[e].a].toFixed(2)}km 付近</a>` : '(線が見つかりません) ' + k} ${m}m</li>`; }).join('') + '</ul>' : '<p class="dp-sub">まだありません</p>');
+  key += '|' + L.length + '|' + T.length + '|' + dTab;
+  if (box._h === key) return; box._h = key; box.innerHTML = h;
+  const iv = id => { const x = $(id); return x ? +x.value : NaN; };
+  { const si = dTabs[dTab].si, sec = DSEC[si], neg = !!sec.sc.kmNeg;
+    const rows = () => [...box.querySelectorAll('[data-vr]')].map(tr => { const q = tr.querySelectorAll('input'); let a = +q[0].value, b = +q[1].value; if (neg) { a = -a; b = -b; } return [Math.min(a, b), Math.max(a, b), +q[2].value, q[3].value]; });
+    const put = (V, msg) => { if (V.some(r => !isFinite(r[0]) || !isFinite(r[1]) || !(r[2] > 0))) { dSigMsg('キロ程と速度を数字で入れてください'); return; } D_LAYEDIT.vmax = D_LAYEDIT.vmax || {}; D_LAYEDIT.vmax[sec.id] = V; box._h = ''; dLayApply(msg); };
+    const ba = $('vadd'); if (ba) ba.onclick = () => { const V = rows(), k = (dTabs[dTab].km0 + dTabs[dTab].km1) / 2; V.push([k - 0.1, k + 0.1, 45, '']); put(V, '速度制限の行を足しました(キロ程と速度を直して「決める」)'); };
+    const bk = $('vok'); if (bk) bk.onclick = () => put(rows(), '速度制限を直しました');
+    box.querySelectorAll('[data-vdel]').forEach(b => b.onclick = () => { const V = rows(); V.splice(+b.dataset.vdel, 1); put(V, '速度制限の行を消しました'); });
+    const br = $('vreset'); if (br) br.onclick = () => { delete D_LAYEDIT.vmax[sec.id]; box._h = ''; dLayApply('速度制限を設定ファイルの値に戻しました'); }; }
+  const setLen = m => { const k = dEdgeKey(S.e); if (!(m > 0)) return; D_LAYEDIT.len[k] = Math.round(m); dLayApply(`線の長さを ${Math.round(m)}m にしました`); };
+  const bo = $('layok'); if (bo) bo.onclick = () => setLen(iv('laylen'));
+  const il = $('laylen'); if (il) il.onkeydown = ev => { if (ev.key === 'Enter') setLen(iv('laylen')); };
+  box.querySelectorAll('[data-ld]').forEach(b => b.onclick = () => setLen((D_LAYEDIT.len[dEdgeKey(S.e)] || dEm[S.e]) + +b.dataset.ld));
+  const bd = $('laydel'); if (bd) bd.onclick = () => { delete D_LAYEDIT.len[dEdgeKey(S.e)]; dLayApply('長さの指定をやめました(自動に戻しました)'); };
+  box.querySelectorAll('[data-lc]').forEach(b => b.onclick = () => { const x = $('laypl'); if (x) x.value = +b.dataset.lc * DTR.carLen; });
+  const bs = $('layst'); if (bs) bs.onclick = () => { const nm = S.st, neg = DSEC[S.si].sc.kmNeg, k = iv('laykm'), pl = iv('laypl'), df = dStDef.get(nm) || {};
+    if (!isFinite(k) || !(pl > 0)) { dSigMsg('キロ程とホームの長さを数字で入れてください'); return; }
+    const o = {}; const km = neg ? -k : k; if (Math.abs(km - df.km) > 1e-6) o.km = Math.round(km * 10000) / 10000; if (Math.abs(pl - df.len) > 0.5) o.len = Math.round(pl);
+    if (Object.keys(o).length) D_LAYEDIT.st[nm] = o; else delete D_LAYEDIT.st[nm]; dLayApply(nm + ' を直しました'); };
+  const bsd = $('laystdel'); if (bsd) bsd.onclick = () => { delete D_LAYEDIT.st[S.st]; dLayApply(S.st + ' を元に戻しました'); };
+  box.querySelectorAll('[data-lse]').forEach(a => a.onclick = ev => { ev.preventDefault(); const e = +a.dataset.lse, i = dTabs.findIndex(tb => tb.parts.some(P => P.si === dSecOf[e] && dKm[E[e].a] >= P.km0 - 0.05 && dKm[E[e].a] <= P.km1 + 0.05)); if (i >= 0) dTab = i; dLaySel = { e }; dBuildBoard(); });
+  box.querySelectorAll('[data-lsn]').forEach(a => a.onclick = ev => { ev.preventDefault(); const nm = a.dataset.lsn, si = DSEC.findIndex(s => s.stInfo.has(nm)); if (si < 0) return; const i = dTabs.findIndex(tb => tb.parts.some(P => P.si === si)); if (i >= 0) dTab = i; dLaySel = { st: nm, si }; dBuildBoard(); });
+}

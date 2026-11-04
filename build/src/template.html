@@ -330,6 +330,15 @@
   .bscroll { overflow-x:auto; scrollbar-color:#33425b transparent; }
   svg#board { display:block; user-select:none; }
   .bk-yardl { font-size:9.5px; font-weight:700; cursor:pointer; paint-order:stroke; stroke:var(--board-bg, #0b0f16); stroke-width:3px; }
+  .bk-laysel { fill:none; stroke:#4ea3ff; stroke-width:7; stroke-linecap:round; opacity:.75; pointer-events:none; }
+  .bk-layset { fill:none; stroke:#ffd23f; stroke-width:3.2; stroke-linecap:round; pointer-events:none; }
+  .bk-st.lay { cursor:pointer; text-decoration:underline dotted; }
+  .bk-st.laysel { fill:#4ea3ff; }
+  svg#board.laying { cursor:pointer; }
+  .bk-vmax rect { fill:#e0a030; opacity:.55; } .bk-vmax.lo rect { fill:#ff6a4d; opacity:.6; }
+  .bk-vmax text { font-size:8.5px; fill:#0b0f16; font-weight:700; text-anchor:middle; pointer-events:none; }
+  .lay-vm input { width:100%; min-width:0; box-sizing:border-box; font-size:12px; padding:2px 3px; }
+  .lay-vm td { padding:2px; } .lay-vm th { font-size:11px; }
   .bk-ends { font-size:11px; fill:#8f9bab; font-weight:700; }
   .bk-yardl.sel { font-size:11px; text-decoration:underline; }
   .bnote { font-size:11.5px; color:#7d8898; margin:8px 2px 0; line-height:1.7; }
@@ -461,7 +470,7 @@
     <div id="btabs"></div>
     <div id="sigbar"></div>
     <div class="bscroll"><svg id="board" xmlns="http://www.w3.org/2000/svg"></svg></div>
-    <p class="bnote">横方向は実際のキロ程(駅の営業キロを目印に比例配分)。ホームの長さは止まる列車の最大両数×18m。信号機は「信号機を編集」で種類(場内・出発・閉塞・入換・中継)・向き・位置を指定できます(指定していない区間は推定の位置)。速度制限は推定で build/disp_cfg.json で直せます。緑の線=確保された進路、列車は実際の長さ、ラベルは列車番号・速度(km/h)・遅れ。信号機をクリックすると停止を指示できます。</p>
+    <p class="bnote">横方向は実際のキロ程(駅の中心=列車が止まる点を営業キロに合わせ、ポイントの斜め線は線の間隔1つで約45m、引上線・留置線は列車が入る長さを取り、残りを駅間に配る)。ホームの長さは止まる列車の最大両数×18m。「配線を編集」で線の長さ・駅のキロ程・ホームの長さ・速度制限(図の下の帯)を、「信号機を編集」で信号機の種類・向き・位置を直せます。緑の線=確保された進路、列車は実際の長さ、ラベルは列車番号・速度(km/h)・遅れ。信号機をクリックすると停止を指示できます。</p>
   </div>
   <aside>
     <section id="dispsec" hidden>
