@@ -67,6 +67,23 @@ function opsLinkSet(a, d) {   // a のあと d につなぐ(d = null なら a �
   opsSave();
 }
 function opsPrevCut(d) { const a = d.prev; if (!a) return; const U = opsDayObj(), st = d.names[0]; U.link = U.link.filter(x => !(x.d === d.no && x.st === st)); if (d.user) d.user.prev = ''; else if (a.user) a.user.next = ''; else U.cut.push({ a: a.no, st, d: d.no }); opsSave(); }
+// 編集で指定したつなぎ方: undefined = 指定なし(自動)、null = つながない、列車 = その列車
+function opsPendPrev(d) {
+  const st = d.names[0], U = opsDayObj(), td = opsDep(d);
+  const byNo = no => ttList.filter(a => opsReal(a) && a !== d && a.no === no && opsLast(a) === st).sort((x, y) => Math.abs(td - opsArr(x)) - Math.abs(td - opsArr(y)))[0] || undefined;
+  if (d.user) return d.user.prev ? byNo(d.user.prev) : undefined;
+  const ua = ttList.find(a => a.user && a.user.next === d.no && opsLast(a) === st); if (ua) return ua;
+  const x = U.link.find(x => x.d === d.no && x.st === st); if (x) return byNo(x.a);
+  return U.cut.some(x => x.d === d.no && x.st === st) ? null : undefined;
+}
+function opsPendNext(a) {
+  const st = opsLast(a), U = opsDayObj(), ta = opsArr(a);
+  const byNo = no => ttList.filter(d => opsReal(d) && d !== a && d.no === no && d.names[0] === st).sort((x, y) => Math.abs(opsDep(x) - ta) - Math.abs(opsDep(y) - ta))[0] || undefined;
+  if (a.user) return a.user.next ? byNo(a.user.next) : undefined;
+  const ud = ttList.find(d => d.user && d.user.prev === a.no && d.names[0] === st); if (ud) return ud;
+  const x = U.link.find(x => x.a === a.no && x.st === st); if (x) return byNo(x.d);
+  return U.cut.some(x => x.a === a.no && x.st === st) ? null : undefined;
+}
 // ===== 車両の1日(つながりをたどる) =====
 function opsChain(t) { let h = t, n = 0; while (h.prev && n++ < 100) h = h.prev; const L = []; let x = h; n = 0; while (x && n++ < 150) { L.push(x); x = x.next; } return L; }
 // ===== 運用表: 車両の1日を、始まり → 列車 → 折り返し → … → 終わり の順に1枚で見せて、その場で直す =====
@@ -87,12 +104,12 @@ function opsOpv(t, ch, b0, e1) {
     const kx = opsEsc(ttUKey(x)), n = x.names.length;
     H.push(`<div class="opv-tr${x === t ? ' on' : ''}${x.dh ? ' dh' : ''}" data-go="${kx}"><span class="opv-t">${opsT(x, 0)}<br>${opsT(x, n - 1)}</span><span class="opv-m"><b>${opsEsc(x.no)}</b> ${opsEsc(opsTy(x))} ${x.cars || '?'}両${x.dh ? (x.user ? ' <i>手で足した回送</i>' : ' <i>自動の回送</i>') : ''}<br>${opsEsc(x.names[0])} → ${opsEsc(opsLast(x))}${n > 2 ? ` <small>(途中${n - 2}駅)</small>` : ''}</span><span class="opv-b">${x.dh && x.user ? `<button data-b="dhfix" data-tk="${kx}">回送を直す</button>` : ''}<button data-go="${kx}">細かく</button></span></div>`);
     if (i < ch.length - 1) {   // 折り返し・つなぎ
-      const y = ch[i + 1], st = opsLast(x), u = opsSetOf(x).turn || {}, cur = u.mode === 'sd' ? 'sd:' + u.sd : u.mode || '', nc = opsNextCands(x); if (!nc.includes(y)) nc.unshift(y);
+      const y = ch[i + 1], st = opsLast(x), u = opsSetOf(x).turn || {}, cur = u.mode === 'sd' ? 'sd:' + u.sd : u.mode || '', nc = opsNextCands(x); if (!nc.includes(y)) nc.unshift(y); const pn = opsPendNext(x), sy = pn || y; if (pn && !nc.includes(pn)) nc.unshift(pn);
       const same = y.names[0] === st;
       H.push(`<div class="opv-turn" data-tk="${kx}"><div class="opv-h"><span class="opv-tag">${same ? '折り返し' : 'つなぎ'}</span><span>${opsEsc(st)} ${opsT(x, n - 1)}着 → ${opsT(y, 0)}発 <small>(${Math.round(opsDep(y) - opsArr(x))}分)</small><br><small>いま: ${opsEsc(opsTurnTxt(x))}</small></span></div><div class="opv-f">`
         + (same && opsSidings(st).length ? `<label>折り返し方<select data-k="turnx">${opsSdSel(st, cur, true)}</select></label>` + (u.mode === 'sd' ? `<label>ホームを出る<input data-k="turn.lv" value="${opsEsc(u.lv || '')}" placeholder="${ttSHMS(opsArr(x) * 60 + 40)}"></label><label>ホームに戻る<input data-k="turn.back" value="${opsEsc(u.back || '')}" placeholder="${ttSHMS(opsDep(y) * 60 - 50)}"></label>` : '') : '')
         + `<label>着く番線<select data-plat="${opsEsc(st)}" data-hl>${opsTrackOpts(st, (opsSetOf(x).plat || {})[st], false, opsTracksFor(x, n - 1))}</select></label>`
-        + `<label>次の列車<select data-k="next">${nc.map(d => `<option value="${opsEsc(ttUKey(d))}"${d === y ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars || '?'}両 ${opsEsc(opsLast(d))}行${d.prev && d.prev !== x ? '(いまは' + opsEsc(d.prev.no) + 'から)' : ''}</option>`).join('')}</select></label><button data-b="cut">ここで切る</button></div></div>`);
+        + `<label>次の列車<select data-k="next">${nc.map(d => `<option value="${opsEsc(ttUKey(d))}"${d === sy ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars || '?'}両 ${opsEsc(opsLast(d))}行${d.prev && d.prev !== x ? '(いまは' + opsEsc(d.prev.no) + 'から)' : ''}</option>`).join('')}</select></label><button data-b="cut">ここで切る</button></div></div>`);
     }
   });
   // 終わり
@@ -172,9 +189,15 @@ function opsTrainPanel(t) {
   const pc = opsPrevCands(t), nc = t.exitEnd ? [] : opsNextCands(t);
   if (t.prev && !pc.includes(t.prev)) pc.unshift(t.prev);
   if (t.next && !nc.includes(t.next)) nc.unshift(t.next);
+  // 選んだつなぎ方(まだ反映していない・反映できなかった)をプルダウンに出す。計算済みの t.prev/t.next だけで描くと、選んでもすぐ元に戻って見える
+  const pp = opsPendPrev(t), pn = t.exitEnd ? undefined : opsPendNext(t);
+  if (pp && !pc.includes(pp)) pc.unshift(pp);
+  if (pn && !nc.includes(pn)) nc.unshift(pn);
+  const selP = pp !== undefined ? pp : t.prev, selN = pn !== undefined ? pn : t.next;
+  const pendTxt = (v, cur) => v !== undefined && v !== cur ? `<span class="opswarn">${opsDirty ? '反映前(「反映」で計算し直します)' : '指定どおりにつなげませんでした'}</span>` : '';
   H.push(`<h3 class="opsh">前・次の運用</h3><div class="opsform1">`
-    + (t.exitStart ? '' : `<label>前の運用(${opsEsc(st0)}に着く列車)<select data-k="prev"><option value="">なし(1日の始まり)</option>${pc.map(a => `<option value="${opsEsc(ttUKey(a))}"${a === t.prev ? ' selected' : ''}>${opsT(a, a.ev.length - 1)}着 ${opsEsc(a.no)} ${opsEsc(opsTy(a))} ${a.cars || '?'}両 ${opsEsc(a.names[0])}から${a.next && a.next !== t ? ' ・今は' + opsEsc(a.next.no) + 'へ' : ''}${opsEsc(opsMark(a, t))}</option>`).join('')}</select></label>`)
-    + (t.exitEnd ? '' : `<label>次の運用(${opsEsc(st1)}から出る列車)<select data-k="next"><option value="">なし(1日の終わり)</option>${nc.map(d => `<option value="${opsEsc(ttUKey(d))}"${d === t.next ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars || '?'}両 ${opsEsc(opsLast(d))}行き${d.prev && d.prev !== t ? ' ・今は' + opsEsc(d.prev.no) + 'から' : ''}${opsEsc(opsMark(t, d))}</option>`).join('')}</select></label>`)
+    + (t.exitStart ? '' : `<label>前の運用(${opsEsc(st0)}に着く列車)<select data-k="prev"><option value="">なし(1日の始まり)</option>${pc.map(a => `<option value="${opsEsc(ttUKey(a))}"${a === selP ? ' selected' : ''}>${opsT(a, a.ev.length - 1)}着 ${opsEsc(a.no)} ${opsEsc(opsTy(a))} ${a.cars || '?'}両 ${opsEsc(a.names[0])}から${a.next && a.next !== t ? ' ・今は' + opsEsc(a.next.no) + 'へ' : ''}${opsEsc(opsMark(a, t))}</option>`).join('')}</select>${pendTxt(pp, t.prev)}</label>`)
+    + (t.exitEnd ? '' : `<label>次の運用(${opsEsc(st1)}から出る列車)<select data-k="next"><option value="">なし(1日の終わり)</option>${nc.map(d => `<option value="${opsEsc(ttUKey(d))}"${d === selN ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars || '?'}両 ${opsEsc(opsLast(d))}行き${d.prev && d.prev !== t ? ' ・今は' + opsEsc(d.prev.no) + 'から' : ''}${opsEsc(opsMark(t, d))}</option>`).join('')}</select>${pendTxt(pn, t.next)}</label>`)
     + `</div><div class="opssel">${!t.next && !t.exitEnd ? '<button data-b="dhafter">ほかの駅へ回送を出す</button>' : ''}${!t.prev && !t.exitStart ? '<button data-b="dhbefore">ほかの駅から回送で来る</button>' : ''}</div>`);
   // 1日の始まり(前の運用なし)
   if (!t.prev && !t.exitStart) {
@@ -301,9 +324,9 @@ function opsDhRender() {
   const d0s = ttHMS(S[0].dep), a1s = ttHMS(S[S.length - 1].arr), d0 = d0s == null ? null : d0s / 60, a1 = a1s == null ? null : a1s / 60;   // 分
   const pc = st0 ? ttList.filter(a => opsReal(a) && !a.dh && opsLast(a) === st0 && !a.exitEnd && (d0 == null || (opsArr(a) <= d0 && d0 - opsArr(a) <= 300))).sort((p, q) => opsArr(q) - opsArr(p)).slice(0, 40) : [];
   const nc = st1 ? ttList.filter(d => opsReal(d) && !d.dh && d.names[0] === st1 && !d.exitStart && (a1 == null || (opsDep(d) >= a1 && opsDep(d) - a1 <= 300))).sort((p, q) => opsDep(p) - opsDep(q)).slice(0, 40) : [];
-  const b = x.begin || {}, f = x.fin || {};
+  const b = x.begin || {}, f = x.fin || {}, bSd = !x.prev && b.mode === 'sd', fSd = !x.next && f.mode === 'sd';
   box.innerHTML = `<div class="opsform"><label>列車番号<input data-x="no" value="${opsEsc(x.no || '')}"></label><label>両数<select data-x="cars">${[2, 4, 6, 8, 10, 12].map(c => `<option${+x.cars === c ? ' selected' : ''}>${c}</option>`).join('')}</select></label></div>
-  <table class="dhst"><thead><tr><th>駅</th><th></th><th>着</th><th>発</th><th>番線</th><th></th></tr></thead><tbody>${S.map((s, i) => `<tr data-i="${i}"><td><select data-s="st">${stOpts(s.st)}</select></td><td>${i && i < S.length - 1 ? `<select data-s="pass"><option value="">停車</option><option value="1"${s.pass ? ' selected' : ''}>通過</option></select>` : i ? '着' : '発'}</td><td>${i ? `<input data-s="arr" value="${opsEsc(s.arr || '')}" placeholder="${i < S.length - 1 && s.pass ? '通過' : ''}">` : ''}</td><td>${i < S.length - 1 && !(i && s.pass) ? `<input data-s="dep" value="${opsEsc(s.dep || '')}">` : ''}</td><td>${s.st ? `<select data-s="plat" data-hl>${opsTrackOpts(s.st, s.plat)}</select>` : ''}</td><td><button data-d="add" title="この下に駅を足す">＋</button>${S.length > 2 ? '<button data-d="rm" title="この駅を消す">✕</button>' : ''}</td></tr>`).join('')}</tbody></table>
+  <table class="dhst"><thead><tr><th>駅</th><th></th><th>着</th><th>発</th><th>番線</th><th></th></tr></thead><tbody>${S.map((s, i) => `<tr data-i="${i}"><td><select data-s="st">${stOpts(s.st)}</select></td><td>${i && i < S.length - 1 ? `<select data-s="pass"><option value="">停車</option><option value="1"${s.pass ? ' selected' : ''}>通過</option></select>` : i ? '着' : '発'}</td><td>${i ? `<input data-s="arr" value="${opsEsc(s.arr || '')}" placeholder="${i < S.length - 1 && s.pass ? '通過' : ''}">` : bSd ? `<input data-x="begin.out" value="${opsEsc(b.out || '')}" placeholder="引上線を出る" title="引上線・留置線を出る時刻(空ならホームに発車の約2分前に着くように)">` : ''}</td><td>${i < S.length - 1 && !(i && s.pass) ? `<input data-s="dep" value="${opsEsc(s.dep || '')}"${!i && bSd ? ' placeholder="空なら出て2分後"' : ''}>` : i === S.length - 1 && fSd ? `<input data-x="fin.lv" value="${opsEsc(f.lv || '')}" placeholder="ホームを出る" title="ホームを出て引上線・留置線へ入る時刻(空なら着いて40秒後)">` : ''}</td><td>${s.st ? `<select data-s="plat" data-hl>${opsDhPlatOpts(s, i, S.length, x)}</select>` : ''}</td><td><button data-d="add" title="この下に駅を足す">＋</button>${S.length > 2 ? '<button data-d="rm" title="この駅を消す">✕</button>' : ''}</td></tr>`).join('')}</tbody></table>
   <div class="btns"><button data-d="fill">あいだの駅を埋める(経路の駅)</button><button data-d="time">空いた時刻をならす</button></div>
   <div class="opsform"><label>前の列車(${opsEsc(st0 || '発駅')}に着く)<select data-x="prev"><option value="">なし</option>${pc.map(a => `<option value="${opsEsc(a.no)}"${a.no === x.prev ? ' selected' : ''}>${opsT(a, a.ev.length - 1)}着 ${opsEsc(a.no)} ${opsEsc(opsTy(a))} ${a.cars}両</option>`).join('')}${x.prev && !pc.some(a => a.no === x.prev) ? `<option selected>${opsEsc(x.prev)}</option>` : ''}</select></label>
   <label>次の列車(${opsEsc(st1 || '着駅')}から出る)<select data-x="next"><option value="">なし</option>${nc.map(d => `<option value="${opsEsc(d.no)}"${d.no === x.next ? ' selected' : ''}>${opsT(d, 0)}発 ${opsEsc(d.no)} ${opsEsc(opsTy(d))} ${d.cars}両</option>`).join('')}${x.next && !nc.some(d => d.no === x.next) ? `<option selected>${opsEsc(x.next)}</option>` : ''}</select></label>
@@ -312,6 +335,13 @@ function opsDhRender() {
   ${x.next && st1 && opsSidings(st1).length ? `<div class="opsform"><label>着いたあと(${opsEsc(st1)})<select data-x="turn.mode"><option value="">自動</option><option value="plat"${(x.turn || {}).mode === 'plat' ? ' selected' : ''}>ホームで待つ</option><option value="sd"${(x.turn || {}).mode === 'sd' ? ' selected' : ''}>引上線・留置線で待つ</option></select></label>${(x.turn || {}).mode === 'sd' ? `<label>線<select data-x="turn.sd" data-hl>${opsSdOpts(st1, (x.turn || {}).sd)}</select></label><label>ホームを出る<input data-x="turn.lv" value="${opsEsc((x.turn || {}).lv || '')}"></label><label>ホームに着く<input data-x="turn.back" value="${opsEsc((x.turn || {}).back || '')}"></label>` : ''}</div>` : ''}
   <p class="hint">時刻は 10:15 か 10:15:30。通過駅は「着」に通る時刻。途中で止まって待つ(待避)なら停車にして着と発を入れ、番線に待避線を選びます。</p>
   <div class="btns"><button data-d="save" class="primary">${opsDh.idx >= 0 ? 'この回送を直す' : '回送を追加'}</button><button data-d="cancel">やめる</button></div><p id="dhmsg" class="hint"></p>`;
+}
+// 回送の番線の選択肢: ホームの番線に加えて、最初の駅(前の列車なし)は「〇〇から出る」、最後の駅(次の列車なし)は「〇〇へ入る」の引上線・留置線
+function opsDhPlatOpts(s, i, n, x) {
+  const first = i === 0 && !x.prev, last = i === n - 1 && !x.next, g = first ? x.begin : last ? x.fin : null, cur = g && g.mode === 'sd' ? 'sd:' + g.sd : null;
+  let h = opsTrackOpts(s.st, cur ? '' : s.plat);
+  if ((first || last) && opsSidings(s.st).length) h += `<optgroup label="${first ? '引上線・留置線から出る' : '引上線・留置線へ入る'}">` + opsSidings(s.st).map(sd => `<option value="sd:${sd.e}"${cur === 'sd:' + sd.e ? ' selected' : ''}>${opsEsc(sd.label)}${first ? 'から出る' : 'へ入る'}</option>`).join('') + '</optgroup>';
+  return h;
 }
 function opsDhFill() {   // 経路の上で通る駅を、隣り合う2駅のあいだに通過として入れる(時刻は距離で割り振る)
   const S = opsDh.x.stops, out = [S[0]];
@@ -357,6 +387,11 @@ $('dhed').addEventListener('change', e => {
   if (!opsDh) return; const s = e.target, x = opsDh.x;
   if (s.dataset.x) { const [g, f] = s.dataset.x.split('.'); if (f) { x[g] = Object.assign({}, x[g]); if (s.value === '') { if (f === 'mode') delete x[g]; else delete x[g][f]; } else x[g][f] = f === 'sd' ? +s.value : s.value; if (f === 'mode' && s.value === 'sd' && x[g].sd == null) { const sd = opsSidings(g === 'begin' ? x.stops[0].st : x.stops[x.stops.length - 1].st)[0]; if (sd) x[g].sd = sd.e; } } else x[g] = s.value; opsDhRender(); return; }
   const tr = s.closest('tr[data-i]'); if (!tr || !s.dataset.s) return; const st = x.stops[+tr.dataset.i], f = s.dataset.s;
+  if (f === 'plat') {   // 引上線・留置線(sd:辺)を選んだら始まり・終わりの設定に。ホームの番線を選び直したら引上線の設定を外す
+    const i = +tr.dataset.i, gk = i === 0 && !x.prev ? 'begin' : i === x.stops.length - 1 && !x.next ? 'fin' : null;
+    if (s.value.startsWith('sd:')) { if (gk) { x[gk] = Object.assign({}, x[gk], { mode: 'sd', sd: +s.value.slice(3) }); st.plat = ''; } opsDhRender(); return; }
+    if (gk && x[gk] && x[gk].mode === 'sd') { delete x[gk]; st.plat = s.value === '' ? '' : +s.value; opsDhRender(); return; }
+  }
   if (f === 'pass') st.pass = !!s.value; else if (f === 'plat') st.plat = s.value === '' ? '' : +s.value; else st[f] = s.value.trim();
   if (f === 'st' || f === 'pass') { if (f === 'st') st.plat = ''; opsDhRender(); }
 });

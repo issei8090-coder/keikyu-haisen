@@ -296,7 +296,7 @@ const SIDINGS = new Map();
 // 検車区(車庫の線を1本ずつ使って、1日の始まり・終わりの列車を並べる駅)。車庫の線 = ホームから直接は行けず、ホームの先の引上線(hs)で折り返して入る行き止まり
 const YARD_ST = new Set(['西馬込', '神奈川新町', '金沢文庫']);
 // plat: 引上線を使わず、ホームで向きを変えて車庫の線と行き来する駅。box = 車庫の線の行き止まりがある範囲 [x0, y0, x1, y1]
-const YARD_CFG = { '金沢文庫': { box: [545, 450, 705, 516], plat: true } };
+const YARD_CFG = { '金沢文庫': { box: [590, 494, 606, 530], plat: true } };
 const YARDS = new Map();
 function yardOf(name) {
   if (YARDS.has(name)) return YARDS.get(name);

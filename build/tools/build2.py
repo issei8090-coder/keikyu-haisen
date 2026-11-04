@@ -52,6 +52,8 @@ plats=[p for p in plats if p[2]-p[0]>=12]
 for x0,y0,x1,y1 in cfg.get('hatch',[]):
     for p in list(plats):
         if x0<=p[0] and p[2]<=x1 and y0<=p[1] and p[3]<=y1: plats.remove(p); hatch.append(p)
+for x0,y0,x1,y1 in cfg.get('hatchKill',[]):
+    hatch=[p for p in hatch if not (x0<=p[0] and p[2]<=x1 and y0<=p[1] and p[3]<=y1)]
 for x0,y0,x1,y1 in cfg.get('platKill',[]):
     plats=[p for p in plats if not (x0<=p[0] and p[2]<=x1 and y0<=p[1] and p[3]<=y1)]
 plats+=cfg.get('platAdd',[])

@@ -554,7 +554,7 @@ function ttUserOps(list) {
       if (!stByName.has(s.st)) { bad.push(`駅名 ${s.st || '(空)'}`); return; }
       const last = i === stops.length - 1, A0 = ttHMS(s.arr), D0 = ttHMS(s.dep);
       let a, d;
-      if (i === 0) { d = D0 != null ? D0 : A0; a = d == null ? null : d - 20; }   // 始発駅: 発車の20秒前にホームに着いている
+      if (i === 0) { const bo = x.begin && x.begin.mode === 'sd' && !x.prev ? ttHMS(x.begin.out) : null; d = D0 != null ? D0 : A0 != null ? A0 : bo != null ? bo + 120 : null; a = d == null ? null : d - 20; }   // 始発駅: 発車の20秒前にホームに着いている(引上線から出るなら、発が空のとき出て2分後に発車)
       else if (last) a = d = A0 != null ? A0 : D0;
       else if (s.pass) a = d = A0 != null ? A0 : D0;
       else { a = A0 != null ? A0 : D0; d = D0 != null ? D0 : A0; }
@@ -1732,12 +1732,13 @@ function ttPlanner(useSiding) {
   // 全列車の番線が決まってから、増結車の入線時刻を決める
   // 品川始発の列車 d を、引上線 sd から1番線へ入れる形に作り直す(番線は変えない)。from = 引上線に現れる時刻
   const lateEnter = (d, e0) => d.ev[0].ot && d.ev[0].ds != null && d.ev[0].ds > d.ev[0].dep * 60 + 20 && !stByName.get(d.names[0]).stops.some(([e]) => e !== e0 && (!E[e].dir || E[e].dir === E[e0].dir));
-  function enterFrom(d, sd, from, a1) {   // a1: ホームに戻る時刻(省略すると発車の50秒前)
+  function enterFrom(d, sd, from, a1, leave) {   // a1: ホームに戻る時刻(省略すると発車の50秒前)。leave: 引上線を出る時刻(あれば a1 はそこから走る時間で決める)
     const dep0 = d.ev[0].dep * 60; if (a1 == null) a1 = dep0 - 50;
     const opt = Object.assign({}, d._opt, { startAt: { e: sd.e, t: sd.t }, startExtra: true, tail: d.tail || null, after: d.tail ? null : d._opt.after, isFree: (i, e) => e === d.route.stopE[i] });
     const r = buildTimedRoute(d.names, d.long, opt);
     if (!r || r.stopD.length !== d.route.stopD.length + 1 || r.stopD[1] > 400 || d.names.some((_, i) => r.stopE[i] !== d.route.stopE[i])) return false;
     const tBack = Math.max(15, Math.min(90, r.stopD[1] / 2.5));
+    if (leave != null) a1 = Math.max(leave + 15, Math.min(dep0 - 10, leave + tBack));
     if (r.stopD[1] / (a1 - Math.max(from, a1 - tBack)) > 4.5) return false;   // その時間では速すぎる: もっと早く出るか、近い線を使う
     d.route = r; d.fromSiding = sd; d.k0 = 1; d.sd = undefined; d.c12 = undefined;
     d.A[0] = a1; d.P[0] = Math.max(dep0, d.P[0]);   // 始発駅で追い抜かれてから出る列車は、遅らせた発車時刻を保つ
@@ -1787,8 +1788,9 @@ function ttPlanner(useSiding) {
       const occ = Y.tracks.map(() => []);   // 車庫の線ごと: {slot 0=奥 1=手前, a, b, xs 出入りの時刻}
       const rc = new Map();
       const route = (from, endSet, trimEnd, key) => { if (rc.has(key)) return rc.get(key); const r = findRoute(from, [], endSet, null, false); let R = null; if (!r.fail) { const len = r.total - trimEnd; if (len > 5) { const segs = cutAt(r, len); R = { segs, total: len, stopD: [0, len], stopE: [segs[0].e, segs[segs.length - 1].e] }; } } rc.set(key, R); return R; };
-      const slotTrim = (tr, slot, L) => Y.plat ? 2 + slot * 21 : slot ? 2 + L + 3 : 2;
-      const cap = (tr, L) => Y.plat ? Math.max(1, Math.min(6, Math.floor((tr.len - 23) / 21) + 1)) : tr.len >= 2 * L + 10 ? 2 : 1;
+      const YPITCH = 14;   // 車庫の線に縦に並べる間隔(8両=12+2)。9両以上は奥に1本だけ
+      const slotTrim = (tr, slot, L) => 2 + slot * YPITCH;
+      const cap = (tr, L) => L > YPITCH - 2 ? (tr.len >= L + 4 ? 1 : 0) : Math.max(1, Math.min(6, Math.floor((tr.len - 2 - (YPITCH - 2)) / YPITCH) + 1));
       const slotName = (tr, slot, L) => { const c = cap(tr, L); return c <= 1 ? '' : c === 2 ? (slot ? '(手前)' : '(奥)') : '(奥から' + (slot + 1) + '本目)'; };
       const fits = (k, slot, a, b, xs) => { for (const o of occ[k]) { if (o.slot === slot && o.a < b + 30 && a < o.b + 30) return false; if (o.slot > slot && xs.some(x => o.a < x + PAD && x - PAD < o.b)) return false; if (o.slot < slot && o.xs.some(x => a < x + PAD && x - PAD < b)) return false; } return true; };   // 奥の車両の出入りの時刻に手前に車両がいてはだめ
       const order = () => Y.tracks.map((tr, k) => k).sort((x, y) => occ[x].length - occ[y].length || x - y);
@@ -2222,9 +2224,11 @@ function ttPlanner(useSiding) {
       if (b.mode !== 'sd') continue;
       if (d.fromSiding || d.k0 !== 0) { uErr(d, '出庫: すでに引上線から出る形になっています'); continue; }
       const sd = sdOf(st, b.sd); if (!sd) { uErr(d, `${st}に指定の留置線・車庫線がありません`); continue; }
-      const dep0 = d.ev[0].dep * 60; let a1 = ttHMS(b.back); if (a1 == null) a1 = dep0 - 110;
+      const dep0 = d.ev[0].dep * 60, bo = ttHMS(b.out); let a1 = ttHMS(b.back); if (a1 == null) a1 = dep0 - 110;
+      if (bo != null && bo > dep0 - 25) uErr(d, `出庫: 引上線を出る時刻 ${ttSHMS(bo)} が発車 ${ttSHMS(dep0)} に近すぎます`);
       if (a1 > dep0 - 10) { uErr(d, `出庫: ホームに着く時刻 ${ttSHMS(a1)} が発車に近すぎます`); a1 = dep0 - 50; }
-      if (!enterFrom(d, sd, STAY0, a1)) { uErr(d, `出庫: ${sd.label || '留置線'}から発車する番線へ入れません(番線を変えるか、別の線を選んでください)`); continue; }
+      if (!enterFrom(d, sd, STAY0, a1, bo != null && bo <= dep0 - 25 ? bo : null)) { uErr(d, `出庫: ${sd.label || '留置線'}から発車する番線へ入れません(番線を変えるか、別の線を選んでください)`); continue; }
+      a1 = d.A[1];
       { const by = whoAt(sd.e, STAY0, a1, d); if (by.length) uConf(d, 'sd', st, sd.e, STAY0, a1, by, `出庫: ${sd.label || '留置線'}を朝 ${ttSHMS(a1)} までにほかの列車も使います`); }
       d.stay = true; d.vStart = 'sd'; d.deadIn = 'user'; reserve(sd.e, STAY0, a1, d); stat.userOut = (stat.userOut || 0) + 1;
     }

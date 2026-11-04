@@ -304,6 +304,7 @@
   .tlabel { font-size:6.6px; font-weight:700; text-anchor:middle; paint-order:stroke; stroke:var(--halo); stroke-width:2.2; stroke-linejoin:round; pointer-events:none; }
   .nolabel .tlabel { display:none; }
   .yardu .tlabel { display:none; } .yardu.sel .tlabel { display:inline; }   /* 車庫の線の車両はラベルなし(選んだときだけ) */
+  .yardu .casing { stroke-width:2.9; } .yardu .body { stroke-width:2.1; }   /* 車庫の線は間隔が約3なので細く描く(本線の列車は4.4) */
   /* ダークでは暗い種別色を明るく読み替える(普通・スカイライナー・ウィング・ライナー) */
   :root:not([data-theme="light"]) .train .body[stroke="#3b3f46"] { stroke:#c4cad3; }
   :root:not([data-theme="light"]) .tlabel[fill="#3b3f46"] { fill:#c4cad3; }
