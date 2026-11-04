@@ -1,11 +1,11 @@
 // ===== 運転指令の画面: 区間ごとの実距離配線図(信号機・在線・進路) =====
 const board = $('board');
 let dTab = 0, dSel = null, dSelSig = null, dView = 'map', dDrawT = 0;
-const D_KMPX = 420, D_YS = 6.6, D_TOP = 44;
+const D_KMPX = 420, D_YS = 6.6, D_TOP = 72;   // D_TOP: 駅名の下に、上側の信号機・列車の札が入る余白
 const ASP_COL = { R: ['#ff3b30'], KD: ['#f2f2f2'], YY: ['#ffcc00', '#ffcc00'], Y: ['#ffcc00'], YG: ['#ffcc00', '#2ee66b'], YGF: ['#ffcc00', '#2ee66b'], G: ['#2ee66b'], SH: ['#f2f2f2'] };
 const ASP_NAME = { R: '停止', KD: '誘導', YY: '警戒', Y: '注意', YG: '減速', YGF: '抑速', G: '進行', SH: '入換進行' };
 const dTabs = [];
-DSEC.forEach((sec, si) => sec.tabs.forEach((tb, ti) => { const T = { si, name: tb.name, km0: tb.km[0], km1: tb.km[1] }; T.parts = [{ si, km0: T.km0, km1: T.km1, off: 0, dy: 0 }]; for (const q of tb.inc || []) { const s2 = DSEC.findIndex(x => x.id === q.sec); if (s2 >= 0 && s2 !== si) T.parts.push({ si: s2, km0: q.km[0], km1: q.km[1], off: q.off || 0, dy: q.dy || 0 }); } dTabs.push(T); }));   // inc: ほかの区間の一部をはめ込む(区間の計算はそのまま、画面だけ)
+DSEC.forEach((sec, si) => sec.tabs.forEach((tb, ti) => { const T = { si, name: tb.name, km0: tb.km[0], km1: tb.km[1] }; T.parts = [{ si, km0: T.km0, km1: T.km1, off: 0, dy: 0 }]; for (const q of tb.inc || []) { const s2 = DSEC.findIndex(x => x.id === q.sec); if (s2 >= 0 && s2 !== si) T.parts.push({ si: s2, km0: q.km[0], km1: q.km[1], off: q.off || 0, dy: q.dy || 0, ends: q.ends || null }); } dTabs.push(T); }));   // inc: ほかの区間の一部をはめ込む(区間の計算はそのまま、画面だけ)
 const dPart = (tb, si) => tb.parts.find(p => p.si === si);
 const dInTab = (tb, si, km, tol = 0) => { const p = dPart(tb, si); return !!p && km >= p.km0 - tol && km <= p.km1 + tol; };
 function dTabGeom(tb) {
@@ -46,7 +46,19 @@ function dBuildBoard() {
     if (Math.max(dKm[a], dKm[b]) < P.km0 - 0.05 || Math.min(dKm[a], dKm[b]) > P.km1 + 0.05) continue;
     d += `M${tb.X(dKm[a], P.si).toFixed(1)} ${tb.Y(dBy[a], P.si).toFixed(1)}L${tb.X(dKm[b], P.si).toFixed(1)} ${tb.Y(dBy[b], P.si).toFixed(1)}`;
   }
+  // ほかの区間とのつなぎ目(泉岳寺 ⇔ 都営浅草線): 両側とも画面にあれば線でつなぐ(計算上の長さは0。キロ程は disp.js の dInit で実距離に合わせてある)
+  if (tb.parts.length > 1) for (const [na, nb] of D.portals) {
+    const sa = adj[na].map(f => dSecOf[f]).find(x => x >= 0), sb = adj[nb].map(f => dSecOf[f]).find(x => x >= 0);
+    if (sa == null || sb == null || sa === sb || !dInTab(tb, sa, dKm[na], 0.05) || !dInTab(tb, sb, dKm[nb], 0.05)) continue;
+    d += `M${tb.X(dKm[na], sa).toFixed(1)} ${tb.Y(dBy[na], sa).toFixed(1)}L${tb.X(dKm[nb], sb).toFixed(1)} ${tb.Y(dBy[nb], sb).toFixed(1)}`;
+  }
   el('path', { d, class: 'bk-track' }, gB.static);
+  // はめ込んだ部分で途中で切れている線の行き先(inc の ends: { hi: 右の端, lo: 左の端 })
+  for (const P of tb.parts) { if (!P.ends) continue; for (const side of ['lo', 'hi']) { const txt = P.ends[side]; if (!txt) continue;
+    const kB = side === 'hi' ? P.km1 : P.km0, ys = [];
+    for (const e of DSEC[P.si].edges) { const a = E[e].a, b = E[e].b; if (E[e].portal) continue; const lo = Math.min(dKm[a], dKm[b]), hi = Math.max(dKm[a], dKm[b]); if (lo < kB && hi > kB) { const f = (kB - dKm[a]) / (dKm[b] - dKm[a]); ys.push(dBy[a] + (dBy[b] - dBy[a]) * f); } }
+    if (!ys.length) continue; const y = (Math.min(...ys) + Math.max(...ys)) / 2, x = tb.X(kB, P.si) + (side === 'hi' ? 46 : -46);
+    el('text', { x, y: tb.Y(y, P.si) + 4, class: 'bk-ends', 'text-anchor': side === 'hi' ? 'start' : 'end' }, gB.static, side === 'hi' ? txt + ' →' : '← ' + txt); } }
   // 区間の外へつながる所
   for (const P of tb.parts) for (const n of DSEC[P.si].bnd) { if (dKm[n] < P.km0 || dKm[n] > P.km1) continue; el('circle', { cx: tb.X(dKm[n], P.si), cy: tb.Y(dBy[n], P.si), r: 2.6, class: 'bk-bnd' }, gB.static); }
   // 信号機(同じ場所に複数あるときは縦に並べる)
@@ -178,8 +190,22 @@ function dLamps(s, o, blink) {
 // 列車の位置(経路上の m)のキロ程
 function dKmAt(t, mm) { const fr = t.dp.spans(mm - 1, mm).pop(); if (!fr) return null; const e = E[fr.e], f = (fr.lo + fr.hi) / 2 / dEm[fr.e]; return dKm[e.a] + (dKm[e.b] - dKm[e.a]) * f; }
 // 経路上の [a,b](m) を図の線にする
+// 経路の外(始まりより前・終わりより先)へ、同じ線の上で延ばせる長さ(m)。車庫・引上線で経路が列車より短いときに使う
+function dExtAvail(t) {
+  const dp = t.dp; if (dp.extA) return dp.extA; const sg = t.route.segs; if (!sg.length) return (dp.extA = [0, 0]);
+  const g0 = sg[0], g1 = sg[sg.length - 1], b0 = g0.t1 >= g0.t0 ? g0.t0 : 1 - g0.t0, f1 = g1.t1 >= g1.t0 ? 1 - g1.t1 : g1.t1;
+  return (dp.extA = [dSecOf[g0.e] >= 0 ? b0 * dEm[g0.e] : 0, dSecOf[g1.e] >= 0 ? f1 * dEm[g1.e] : 0]);
+}
+function dExtSeg(t, back, o0, o1, tb) {   // 経路の端から o0〜o1(m) 先(back なら手前)の線
+  const sg = t.route.segs, g = back ? sg[0] : sg[sg.length - 1], si = dSecOf[g.e], P = dPart(tb, si); if (!P || o1 <= o0) return '';
+  const e = E[g.e], Em = dEm[g.e], sgn = g.t1 >= g.t0 ? 1 : -1, pe = back ? g.t0 : g.t1, at = o => Math.max(0, Math.min(1, pe + (back ? -sgn : sgn) * o / Em)), p0 = at(o0), p1 = at(o1); if (Math.abs(p1 - p0) * Em < 0.5) return '';
+  const km = f => dKm[e.a] + (dKm[e.b] - dKm[e.a]) * f, by = f => dBy[e.a] + (dBy[e.b] - dBy[e.a]) * f;
+  return `M${tb.X(km(p0), si).toFixed(1)} ${tb.Y(by(p0), si).toFixed(1)}L${tb.X(km(p1), si).toFixed(1)} ${tb.Y(by(p1), si).toFixed(1)}`;
+}
 function dPath(t, a, b, tb) {
   let d = '';
+  if (a < 0) d += dExtSeg(t, true, Math.max(0, -b), -a, tb);
+  if (b > t.dp.total) d += dExtSeg(t, false, Math.max(0, a - t.dp.total), b - t.dp.total, tb);
   for (const s of t.dp.spans(a, b)) {
     const si = dSecOf[s.e], P = dPart(tb, si); if (!P) continue;
     const e = E[s.e], Em = dEm[s.e], f0 = s.lo / Em, f1 = s.hi / Em;
@@ -209,7 +235,9 @@ function dDraw(force) {
   const labs = [];
   for (const t of ttActive || []) {
     if (!t.route || !t.g) continue; const dp = dPrep(t); if (!dp.ranges.some(r => tb.parts.some(P => r.secs ? r.secs.has(P.si) : r.sec === P.si))) continue;
-    const m = t.ph ? t.ph.m : dp.s2m(t.s), L = t.ph ? t.ph.L : dLen(t);
+    const L = t.ph ? t.ph.L : dLen(t); let m = t.ph ? t.ph.m : dp.s2m(t.s);
+    { const [eb, ef] = dExtAvail(t);   // 経路の終わり(引上線・留置線の行き止まり)より先へははみ出さない: はみ出した分が描かれず、列車が縮んで見えていた。車庫に置く列車は経路が列車より短いので、同じ線の上へ延ばして描く
+      if (m + L / 2 > dp.total + ef) m = dp.total + ef - L / 2; if (m - L / 2 < -eb) m = Math.min(-eb + L / 2, dp.total + ef - L / 2); }
     const d = dPath(t, m - L / 2, m + L / 2, tb); if (!d) continue;
     const ty = TYPES[t.shown || t.type];
     const g = el('g', { class: 'bk-train' + (t === dSel ? ' sel' : '') }, gB.occ);
@@ -222,6 +250,11 @@ function dDraw(force) {
     if (!dp.sigB || dp.sigB.src !== dp.sig) { dp.sigB = dp.sig.filter(x => x.s.kind !== '中継'); dp.sigB.src = dp.sig; }
     { let a = F - L - 400, z = F + 400; for (const x of dp.sigB) { if (x.m <= F - L) a = Math.max(a, x.m); else if (x.m >= F) { z = Math.min(z, x.m); break; } } dOcc += dPath(t, Math.max(a, F - L - 400), z, tb); }
     g.addEventListener('click', ev => { ev.stopPropagation(); dSelect(t); });
+    // 車庫・留置線で止まっている列車: 札を上下に出すと隣の線の列車に重なって隠すので、列車の後ろ(行き止まり側)の横に小さく
+    if (t.yard && !t.ph) { const bb = g.getBBox(); if (bb.width + bb.height > 0) {
+      const fr0 = dp.spans(0, Math.min(dp.total, 5))[0], g0 = fr0 && t.route.segs[fr0.i], e0 = fr0 && E[fr0.e], right = !g0 || (g0.t1 > g0.t0) === (dKm[e0.b] > dKm[e0.a]);
+      const yl = el('text', { x: right ? bb.x - 4 : bb.x + bb.width + 4, y: bb.y + bb.height / 2 + 3.4, class: 'bk-yardl' + (t === dSel ? ' sel' : ''), 'text-anchor': right ? 'end' : 'start', fill: ty.color }, gB.lab, t.no || TYPES[t.type].short);
+      yl.addEventListener('click', ev => { ev.stopPropagation(); dSelect(t); }); } continue; }
     // ラベルは先頭の位置に
     const fr = dp.spans(m + L / 2 - 1, m + L / 2).pop(); if (!fr) continue;
     const e = E[fr.e], f = (fr.lo + fr.hi) / 2 / dEm[fr.e], km = dKm[e.a] + (dKm[e.b] - dKm[e.a]) * f, by = dBy[e.a] + (dBy[e.b] - dBy[e.a]) * f;

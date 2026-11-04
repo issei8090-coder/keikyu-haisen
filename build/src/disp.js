@@ -50,8 +50,66 @@ function dSuccPhys(de) {
   dSuccP.set(de, r); return r;
 }
 const dDot = (a, b) => { if (E[a >> 1].portal || E[b >> 1].portal) return 1; const v = dVec(a), w = dVec(b); return v[0] * w[0] + v[1] * w[1]; };
+// ===== 図の x → キロ程(2026-11-04 作り直し) =====
+// 前は駅のホームの端だけを目印に、その間を図の長さで比例配分していた。図の描き方しだいでポイントの斜め線が数百mになったり、引上線が列車より短くなったりした。
+// いまは段ごとに、(1) 隣の線へ渡る斜め線は横に layout.turnout m(線の間隔1つぶん。斜め線の縦の長さに比例)、(2) 行き止まりの引上線・留置線は列車が入る長さ以上(layout.siding m、区間ごとに sc.siding)、
+// (3) 残り(ふつうの線)で駅と駅のキロ程の差を埋める。足りないときは (1)(2) を同じ割合で縮める。端の外側(終点の先)は (1)(2) をそのまま使う。
+const D_LAY = Object.assign({ turnout: 45, siding: 236, fmin: 2, endMax: 12 }, DC.layout || {});
+function dRowLayout(sc, r, nrow, A) {
+  if (!A || A.length < 2) return null;
+  const xs = []; N.forEach((p, n) => { if (nrow[n] === r && adj[n].length) xs.push(p.x); });
+  for (const a of A) xs.push(a[0]);
+  xs.sort((a, b) => a - b);
+  const X = []; for (const x of xs) if (!X.length || x - X[X.length - 1] > 0.25) X.push(x);
+  const nI = X.length - 1; if (nI < 1) return null;
+  const w = new Float64Array(nI), req = new Float64Array(nI), reqD = new Float64Array(nI); for (let k = 0; k < nI; k++) w[k] = X[k + 1] - X[k];
+  const idx = x => { let lo = 0, hi = X.length - 1; while (lo < hi) { const k = (lo + hi + 1) >> 1; if (X[k] <= x + 0.26) lo = k; else hi = k - 1; } return lo; };
+  const cover = (xa, xb, d, R = req) => { const i = idx(Math.min(xa, xb)), j = idx(Math.max(xa, xb)); for (let k = i; k < j; k++) R[k] = Math.max(R[k], d); };
+  const inRow = e => !E[e].portal && nrow[E[e].a] === r && nrow[E[e].b] === r;
+  const dxOf = e => Math.abs(N[E[e].b].x - N[E[e].a].x), dyOf = e => Math.abs(N[E[e].b].y - N[E[e].a].y);
+  const rowE = []; E.forEach((e, i) => { if (inRow(i)) rowE.push(i); });
+  // 線の間隔(図): 斜め線の縦の長さの中央値
+  const dys = rowE.filter(e => dyOf(e) >= 0.8 && dxOf(e) >= 0.3).map(dyOf).sort((a, b) => a - b);
+  const sp = (sc.layout && sc.layout.sp) || (dys.length ? dys[dys.length >> 1] : 6);
+  const turn = (sc.layout && sc.layout.turnout) || D_LAY.turnout;
+  for (const e of rowE) { const dx = dxOf(e), dy = dyOf(e); if (dy < 0.5 || dx < 0.3) continue; const u = Math.max(0.3, Math.min(4, dy / sp)); cover(N[E[e].a].x, N[E[e].b].x, turn * u / 1000 / dx, reqD); }
+  // 行き止まりの線(ホームの無いもの): 分岐までの真っすぐな線全体で、列車が入る長さ
+  const sid = sc.siding || D_LAY.siding, dead = [];
+  N.forEach((p, n) => {
+    if (nrow[n] !== r || adj[n].length !== 1 || D.exits.some(q => q[0] === n) || D.portals.some(q => q.includes(n))) return;
+    let cur = n, e = adj[n][0], run = [], plat = false, guard = 0;
+    while (guard++ < 50 && inRow(e) && dyOf(e) < 0.5) { run.push(e); if (!isNaN(stopX[e])) plat = true; const nx = E[e].a === cur ? E[e].b : E[e].a; if (adj[nx].length !== 2) break; const f = adj[nx].find(x => x !== e); cur = nx; e = f; }
+    if (plat || !run.length) return;
+    let x0 = Infinity, x1 = -Infinity; for (const f of run) { x0 = Math.min(x0, N[E[f].a].x, N[E[f].b].x); x1 = Math.max(x1, N[E[f].a].x, N[E[f].b].x); }
+    if (x1 - x0 < 0.3) return;
+    cover(x0, x1, sid / 1000 / (x1 - x0)); dead.push([x0, x1]);
+  });
+  // 目印(駅のホームの端・段の切れ目)の間を埋める
+  const fmin = D_LAY.fmin / 1000, dens = new Float64Array(nI).fill(NaN), Aa = A.map(a => [idx(a[0]), a[1]]).sort((p, q) => p[0] - q[0]);
+  const fill = [], dv = (k, f) => reqD[k] > 0 ? Math.max(reqD[k], req[k]) : Math.max(req[k], f);   // 斜め線のかかる所は決めた長さちょうど(駅間が長くても伸ばさない)
+  for (let q = 0; q + 1 < Aa.length; q++) {
+    const [i0, k0] = Aa[q], [i1, k1] = Aa[q + 1]; if (i1 <= i0) continue;
+    const K = Math.max(1e-4, k1 - k0), g = f => { let s = 0; for (let k = i0; k < i1; k++) s += dv(k, f) * w[k]; return s; };
+    if (g(fmin) >= K) { const s = K / g(fmin); for (let k = i0; k < i1; k++) dens[k] = dv(k, fmin) * s; fill.push(fmin * s); continue; }
+    let lo = fmin, hi = fmin; while (g(hi) < K) hi *= 2;
+    for (let it = 0; it < 60; it++) { const mid = (lo + hi) / 2; if (g(mid) < K) lo = mid; else hi = mid; }
+    for (let k = i0; k < i1; k++) dens[k] = dv(k, hi); fill.push(hi);
+  }
+  const iA = Aa[0][0], iZ = Aa[Aa.length - 1][0], endF = D_LAY.endMax / 1000;
+  const d0 = Math.min(endF, fill.length ? fill[0] : endF), d1 = Math.min(endF, fill.length ? fill[fill.length - 1] : endF);
+  for (let k = 0; k < iA; k++) dens[k] = dv(k, d0);
+  for (let k = iZ; k < nI; k++) dens[k] = dv(k, d1);
+  for (let k = 0; k < nI; k++) if (isNaN(dens[k])) dens[k] = dv(k, fmin);
+  const K = new Float64Array(X.length); K[iA] = Aa[0][1];
+  for (let k = iA; k < nI; k++) K[k + 1] = K[k] + dens[k] * w[k];
+  for (let k = iA - 1; k >= 0; k--) K[k] = K[k + 1] - dens[k] * w[k];
+  // 目印は正確に(縮めた丸めの誤差を消す)
+  for (const [i, km] of Aa) K[i] = km;
+  return { X, K, d0, d1, sp, dead };
+}
 function dInit() {
-  DC.sections.forEach((sc, si) => {
+  // 1) 区間ごとに: 段の割り当て・駅のホームの端(目印)・同じ区間の段の切れ目
+  const SI = DC.sections.map((sc, si) => {
     const inR = (q, x, y) => x >= q[0] && x <= q[1] && y >= q[2] && y <= q[3];
     const rowOf = (x, y) => sc.rows.findIndex(r => r.rects.some(q => inR(q, x, y)));
     const nrow = N.map((p, n) => adj[n].length ? rowOf(p.x, p.y) : -1);
@@ -75,7 +133,36 @@ function dInit() {
       if (!anc[rb].some(p => Math.abs(p[0] - xb) < 1.5)) anc[rb].push([xb, kp]);
       anc[ra].sort((p, q) => p[0] - q[0]); anc[rb].sort((p, q) => p[0] - q[0]);
     });
+    return { sc, si, nrow, anc, stInfo, done: false };
+  });
+  // 2) ほかの区間とのつなぎ目(泉岳寺 ⇔ 都営浅草線など)。sc.link = { sec: 相手の区間, off }: 相手のキロ程 + off = この区間のキロ程
+  //    つなぎ目の点が駅の並びの外側(段の端)にあれば、両側の駅の間の実距離を図の長さで按分した所に置く。内側(京急の図で泉岳寺と品川の間から下へ出る高輪台方面の線)なら
+  //    その区間の並べ方を崩さないよう目印にせず、相手の側をその位置に合わせる(少し離して、画面でつなぎの斜め線が見えるようにする)
+  const conv = (to, from, km) => { const lt = SI[to].sc.link, lf = SI[from].sc.link; if (lt && lt.sec === SI[from].sc.id) return km + lt.off; if (lf && lf.sec === SI[to].sc.id) return km - lf.off; return NaN; };
+  const near = (S, r, x) => { let best = null; for (const p of S.anc[r]) if (!best || Math.abs(p[0] - x) < Math.abs(best[0] - x)) best = p; return best; };
+  const outside = (S, r, x) => { const a = S.anc[r]; return !a.length || x < a[0][0] - 0.1 || x > a[a.length - 1][0] + 0.1; };
+  const D_LINKGAP = D_LAY.linkGap != null ? D_LAY.linkGap : 0.08, defer = [];
+  D.portals.forEach(([na, nb]) => {
+    const sa = SI.findIndex(S => S.nrow[na] >= 0), sb = SI.findIndex(S => S.nrow[nb] >= 0); if (sa < 0 || sb < 0 || sa === sb || isNaN(conv(sa, sb, 0))) return;
+    const A = SI[sa], B = SI[sb], ra = A.nrow[na], rb = B.nrow[nb], xa = N[na].x, xb = N[nb].x, oa = outside(A, ra, xa), ob = outside(B, rb, xb);
+    if (oa && ob) {
+      const PA = near(A, ra, xa), PB = near(B, rb, xb); if (!PA || !PB) return;
+      const kB = conv(sa, sb, PB[1]), pa = Math.abs(xa - PA[0]), pb = Math.abs(xb - PB[0]), J = PA[1] + (kB - PA[1]) * pa / Math.max(1e-6, pa + pb);
+      const g = Math.sign(PA[1] - kB) * D_LINKGAP / 2;   // 両側を少し離して、画面でつなぎの線が見えるようにする
+      A.anc[ra].push([xa, J + g]); B.anc[rb].push([xb, conv(sb, sa, J - g)]); A.anc[ra].sort((p, q) => p[0] - q[0]); B.anc[rb].sort((p, q) => p[0] - q[0]);
+    } else if (oa) defer.push([sa, ra, na, sb, nb]);
+    else if (ob) defer.push([sb, rb, nb, sa, na]);
+  });
+  // 3) 区間ごとに並べ方を決めてキロ程を入れる
+  SI.forEach(S => {
+    const { sc, si, nrow, anc, stInfo } = S;
+    for (const [so, ro, no, sin, ni] of defer) { if (so !== si || !SI[sin].done || isNaN(dKm[ni])) continue;
+      const k = conv(so, sin, dKm[ni]), P = near(S, ro, N[no].x); if (!P) continue;
+      const kk = k + Math.sign(P[1] - k) * D_LINKGAP, ex = anc[ro].find(q => Math.abs(q[0] - N[no].x) < 0.3);   // 同じ所に2本(複線)なら、駅に近いほうに合わせる(どちらの線もつなぎの斜め線が見える)
+      if (ex) { if (Math.abs(P[1] - kk) < Math.abs(P[1] - ex[1])) ex[1] = kk; } else anc[ro].push([N[no].x, kk]); anc[ro].sort((p, q) => p[0] - q[0]); }
+    const lay = DC.layout && DC.layout.off ? sc.rows.map(() => null) : sc.rows.map((_, r) => dRowLayout(sc, r, nrow, anc[r]));
     const kmAt = (r, x) => {
+      const Ly = lay[r]; if (Ly) { const X = Ly.X, K = Ly.K, n = X.length; if (x <= X[0]) return K[0] - (X[0] - x) * Ly.d0; if (x >= X[n - 1]) return K[n - 1] + (x - X[n - 1]) * Ly.d1; let lo = 0, hi = n - 1; while (hi - lo > 1) { const k = (lo + hi) >> 1; if (X[k] <= x) lo = k; else hi = k; } return K[lo] + (K[hi] - K[lo]) * (x - X[lo]) / Math.max(1e-9, X[hi] - X[lo]); }
       const a = anc[r]; if (!a.length) return NaN;
       if (a.length === 1) return a[0][1];
       let i = 0; while (i + 2 < a.length && a[i + 1][0] < x) i++;
@@ -85,10 +172,12 @@ function dInit() {
       return k0 + (k1 - k0) * (x - x0) / Math.max(1e-6, x1 - x0);
     };
     N.forEach((p, n) => { if (nrow[n] >= 0) { dKm[n] = kmAt(nrow[n], p.x); dBy[n] = p.y + sc.rows[nrow[n]].dy; } });
+    for (const [n, y] of Object.entries(sc.byFix || {})) if (nrow[+n] >= 0) dBy[+n] = y + sc.rows[nrow[+n]].dy;   // 画面だけの縦位置の手直し(点の番号: 図の y)。長さの計算は元の図の y のまま
     const edges = [];
     E.forEach((e, i) => { if (nrow[e.a] >= 0 && nrow[e.b] >= 0 && (e.portal || nrow[e.a] === nrow[e.b])) { dSecOf[i] = si; edges.push(i); } });
     const bnd = new Set(); edges.forEach(i => [E[i].a, E[i].b].forEach(n => { if (adj[n].some(f => dSecOf[f] !== si)) bnd.add(n); }));
     DSEC.push({ sc, id: sc.id, name: sc.name, edges, stInfo, bnd, tabs: sc.tabs, vmax: sc.vmax });
+    S.done = true;
   });
   E.forEach((e, i) => {
     if (dSecOf[i] < 0) { dEm[i] = e.len * DISP_FALL; return; }
