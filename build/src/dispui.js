@@ -367,10 +367,13 @@ function dPanel() {
       (D_SIGWARN.has(s) ? `<ul class="se-warn">${D_SIGWARN.get(s).map(m => `<li>${m}</li>`).join('')}</ul>` : '<p class="dp-sub" style="color:#7fd18b">規定の目安から外れているところはありません</p>') +
       `<div class="btns">${sp && sp.est ? '<button id="seok">この位置で確定</button>' : ''}<button id="sedel" class="danger">この信号機を消す</button></div>`;
   } else if (s) {
+    const manualOpts = s.kind === '入換' ? ['R'] : dHeadAv(s.spec).filter(a => ASP_NAME[a] && a !== 'KD' && a !== 'SH');
     h += `<div class="dp-title">${s.name}</div><div class="dp-sub">${dSigKm(s).toFixed(3)}km・${s.dn == null ? '' : s.dn ? '下り方向' : '上り方向'}(${dSigWhere(s)})</div>` +
       `<p>現示: <span class="dp-asp a-${s.asp}">${ASP_NAME[s.asp] || s.asp}</span>${s.asp && ASP[s.asp] != null && s.asp !== 'R' ? ' ' + ASP[s.asp] + 'km/h' : ''}</p>` +
       `<p class="dp-sub">灯: ${s.spec && SIG_HEADS[s.spec.h] ? SIG_HEADS[s.spec.h].name : '指定なし'}${s.spec && s.spec.noG ? '・進行なし' : ''}(${dHeadText(s.spec)})</p>` +
-      `<div class="btns"><button id="dpman">${s.man ? '停止の指示を解除' : '停止を指示する'}</button></div>`;
+      (s.kind === '中継' ? `<p class="dp-sub">中継信号機の現示は、先の主信号機に連動します。</p>` :
+        `<label class="se-row"><span>手動現示</span><select id="dasp"><option value="">自動連動</option>${manualOpts.map(a => `<option value="${a}"${s.manualAsp === a ? ' selected' : ''}>${ASP_NAME[a]}</option>`).join('')}</select></label>` +
+        `<p class="dp-sub">手動指示は自動連動より停止側にだけ反映します。在線・進路・過走余裕が許さない進行側の指示は自動現示で抑えます。</p>`);
   } else if (dEdit) {
     const tb = dTabs[dTab], ws = SIGS.filter(x => dInTab(tb, x.sec, x.km) && D_SIGWARN.has(x)).sort((a, b) => a.km - b.km), lw = D_LOCWARN.filter(w => dInTab(tb, w.sec, w.km)).sort((a, b) => a.km - b.km);
     h += `<div class="dp-title">置き方の確かめ</div><p class="dp-sub">規定の目安から外れている信号機 ${ws.length}基・守られていない分岐 ${lw.length}か所(図の ! 印)</p>` +
@@ -386,7 +389,7 @@ function dPanel() {
     const b1 = $('dphold'); if (b1) b1.onclick = () => { if (t && t.ph) { t.ph.hold = !t.ph.hold; dDraw(true); } };
     const b3 = $('dpcmd'); if (b3) b3.onclick = () => { if (t && typeof gCmdOpen === 'function') gCmdOpen(t); };
     box.querySelectorAll('[data-wi]').forEach(li => li.onclick = () => dSelectSig(SIGS[+li.dataset.wi]));
-    const b2 = $('dpman'); if (b2) b2.onclick = () => { if (s) { s.man = !s.man; dSigShow(ttActive || []); dDraw(true); } };
+    const aspSel = $('dasp'); if (aspSel) aspSel.onchange = () => { if (s) { s.manualAsp = aspSel.value || null; dSigShow(ttActive || []); dDraw(true); } };
     if (s && dEdit) {
       box.querySelectorAll('[data-sk]').forEach(b => b.onclick = () => { const sp = dSpecFor(s); sp.k = b.dataset.sk; delete sp.est; dSigApply(sp); });
       box.querySelectorAll('[data-sd]').forEach(b => b.onclick = () => {

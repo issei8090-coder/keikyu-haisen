@@ -952,7 +952,7 @@ const dYudoSig = s => !s || !s.spec || ((dIsHome(s.kind) || s.kind === '入換')
 function dAspect(t, j) {
   const lk = t.dLocks; if (!lk || !lk.has(j)) return 'R';
   if (lk.get(j) === 2) return 'KD';
-  if (t.dp.sig[j] && t.dp.sig[j].s.kind === '入換') return 'SH';   // 入換信号機の進行(25km/h)
+  if (t.dp.sig[j] && t.dp.sig[j].s.kind === '入換') return dManualCap(t.dp.sig[j].s, 'SH');   // 入換信号機の進行(25km/h)
   let n = 0; for (let k = j; k < j + 5 && lk.has(k) && lk.get(k) !== 2; k++) n++;
   if (D_VOPEN && n >= 1 && n < 4 && dVirtOpen(t, j + n)) n = 4;
   const sg = t.dp.sig[j] && t.dp.sig[j].s;
@@ -961,9 +961,9 @@ function dAspect(t, j) {
     // 過走余裕: 次の(止まる)信号機の先の分岐がほかの列車に使われているなら警戒。警戒を出せない信号機は、空くまで停止
     // 一度「空いている」と決めた現示は、列車が近づいてから下げない(上げるのはよい)
     if (j + 1 < t.dp.sig.length && !(b && b.ovrOK) && !dOverrunClear(t, j + 1)) { const H = sg && sg.spec && SIG_HEADS[sg.spec.h]; a = !H || H.a.includes('YY') ? 'YY' : 'R'; } else if (b) b.ovrOK = true;
-    return dHeadAsp(sg, a);
+    return dManualCap(sg, dHeadAsp(sg, a));
   }
-  return dHeadAsp(sg, n === 2 ? 'YG' : n === 3 ? 'YGF' : 'G');
+  return dManualCap(sg, dHeadAsp(sg, n === 2 ? 'YG' : n === 3 ? 'YGF' : 'G'));
 }
 const dAspV = a => KMH(ASP[a] != null ? ASP[a] : ASP.G);
 // 時刻表上で、経路の位置 m(中心)に居るはずの時刻
@@ -1048,7 +1048,7 @@ function dStepTrain(t, T, dt) {
     if (t.dLocks.has(j)) continue;
     if (ahead) { t.dWhy = '在線 ' + ahead.no; break; }
     const S = dp.sig[j]; if (S.m > rg.m1 + 0.01 || S.m - front > look) break;
-    if (S.s.man || p.hold) break;
+    if (S.s.man || S.s.manualAsp === 'R' || p.hold) break;
     // 停車する駅の出発信号は、発車時刻の30秒前まで開かない(その先を本線の列車に空けておく)
     {   // 止まる駅より先は、その駅を発車できる時刻(30秒前)になるまで開かない
       let sb = null; for (let q = p.k; q < dp.stops.length; q++) { const x = dp.stops[q]; if (x.thru) continue; if (dStopX(x, L) < S.m - 0.5) sb = x; else break; }
@@ -1225,6 +1225,14 @@ function dVirtAsp(t, j) {
 // 待避で、追い抜く列車を待っている(この駅の出発は停止のまま)
 const dWaitNow = t => { const st = t.dp.stops[t.ph.k]; return !!(st && t.dWait && t.dWait[st.k] && dWaiting(t, st.k, D_NOW)); };
 const D_ASPRANK = { R: 0, KD: 0, SH: 0, YY: 1, Y: 1, YG: 2, YGF: 3, G: 4 };
+// 手動現示は自動連動の安全側にだけ作用する。要求が自動現示より進行側なら自動現示を維持。
+function dManualCap(s, safe) {
+  const req = s && s.manualAsp;
+  if (safe === 'SH') return req === 'R' ? 'R' : safe;
+  if (!req || !ASP_ORD.includes(req)) return safe;
+  const ri = ASP_ORD.indexOf(req), si = ASP_ORD.indexOf(safe);
+  return ri <= si ? req : safe;
+}
 // 主要駅か(ホームの線が3本以上: 泉岳寺・品川・平和島・京急蒲田・京急川崎)。出発信号は停止定位で、止まっている列車には発車の少し前まで停止を見せる。ほかの駅の出発は進行のままでよい
 function dMajorStop(t, st) {
   if (st.major != null) return st.major; const s = st.name && stByName.get(st.name);
@@ -1246,6 +1254,7 @@ function dSigShow(act) {
     }
   }
   for (const s of SIGS) if (s.asp == null && s.kind !== '中継') s.asp = s.man ? 'R' : s.kind === '閉塞' ? dDefAsp(s) : 'R';
+  for (const s of SIGS) if (s.kind !== '中継' && s.asp != null) s.asp = dManualCap(s, s.asp);
   for (const s of SIGS) if (s.kind === '中継') s.asp = s.next ? s.next.asp : 'R';   // 中継信号機は先の信号機の現示
 }
 // 列車の来ていない閉塞信号: まっすぐ先の区間がいくつ空いているか
