@@ -263,6 +263,8 @@ function dDraw(force) {
     const d = dPath(t, m - L / 2, m + L / 2, tb); if (!d) continue;
     const ty = TYPES[t.shown || t.type];
     const g = el('g', { class: 'bk-train' + (t === dSel ? ' sel' : '') }, gB.occ);
+    // 線路上の列車は拡大時も押しやすいよう、見た目に影響しない太いクリック領域を持たせる
+    el('path', { d, class: 'bk-train-hit' }, g);
     // 1両ずつ区切って描く(12両は8+4の継ぎ目を広く。4両の側は、増結の前後 t.cpl が無ければ南=浦賀方と推定)
     const F = m + L / 2, n = t.cut || t.unit ? 4 : Math.max(1, t.cars || Math.round(L / DTR.carLen)), cl = L / n;
     let jt = -1;
@@ -296,6 +298,8 @@ function dDraw(force) {
     for (let k = 0; k < 6; k++) { if (!placed.some(q => L.x + x0 < q.x1 + 6 && q.x0 - 6 < L.x + x0 + w && Math.abs(q.y - y) < 19)) break; y += up ? -19 : 19; }
     placed.push({ x0: L.x + x0, x1: L.x + x0 + w, y });
     const g = el('g', { class: 'bk-lab' + (t === dSel ? ' sel' : ''), transform: `translate(${L.x.toFixed(1)} ${y.toFixed(1)})` }, gB.lab);
+    // 札の文字と枠より広い透明な当たり判定。見た目の札サイズは変えない
+    el('rect', { x: x0 - 8, y: -14, width: w + 16, height: 28, rx: 8, class: 'bk-lab-hit' }, g);
     el('line', { x1: 0, y1: up ? 8 : -8, x2: 0, y2: (L.y - y) * 0.82, class: 'bk-labline' }, g);
     el('rect', { x: x0, y: -8, width: w, height: 16, rx: 4, class: 'bk-labbox', stroke: L.ty.color }, g);
     el('rect', { x: x0, y: -8, width: 3.2, height: 16, rx: 1.6, class: 'bk-labbar', fill: L.ty.color }, g);
