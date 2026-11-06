@@ -20,7 +20,7 @@ async function cloudInit() {
   const [ops, sig, lay] = got;
   if (lay && (lay.saved || 0) > ((D_LAYEDIT && D_LAYEDIT.saved) || 0)) { D_LAYEDIT = Object.assign({ st: {}, len: {} }, lay); try { localStorage.setItem(D_LAYKEY, JSON.stringify(D_LAYEDIT)); } catch (e) { } try { dRelayout([]); dTabs.forEach(dTabGeom); if (dView === 'disp') dBuildBoard(); } catch (e) { } }
   if (ops && (ops.saved || 0) > ((USER_OPS && USER_OPS.saved) || 0)) { USER_OPS = ops; try { localStorage.setItem('kq-opsuser', JSON.stringify(USER_OPS)); } catch (e) { } }
-  if (sig && sig.list && (sig.saved || 0) > ((D_SIGMAN && D_SIGMAN.saved) || 0)) { D_SIGMAN = { saved: sig.saved, list: sig.list }; try { localStorage.setItem(D_SIGKEY, JSON.stringify(D_SIGMAN)); } catch (e) { } if (typeof dSigApply === 'function') try { dSigApply(null); } catch (e) { } }
+  if (sig && sig.list && (sig.saved || 0) > ((D_SIGMAN && D_SIGMAN.saved) || 0)) { D_SIGMAN = { saved: sig.saved, list: sig.list, v: sig.v, del: sig.del || {}, noest: sig.noest || {} }; try { localStorage.setItem(D_SIGKEY, JSON.stringify(D_SIGMAN)); } catch (e) { } if (typeof dSigApply === 'function') try { dSigApply(null); } catch (e) { } }
   cloudMsg(cloudKey ? '編集は保存先(GitHub)に自動で保存されます' : '編集キーを入れると、編集を保存先(GitHub)に保存してほかの端末でも見られます');
 }
 // 編集したとき: 1.5秒まとめてからサーバーへ送る
@@ -53,4 +53,4 @@ if ($('cloudkey')) {
   };
 }
 // 信号機の編集の保存にも送信を足す
-if (typeof dSigSave === 'function') { const f = dSigSave; dSigSave = function () { f.apply(this, arguments); cloudPush('signals', D_SIGMAN); }; }
+if (typeof dSigSave === 'function') { const f = dSigSave; dSigSave = function () { f.apply(this, arguments); cloudPush('signals', typeof dSigData === 'function' ? dSigData() : D_SIGMAN); }; }

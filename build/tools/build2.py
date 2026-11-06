@@ -71,6 +71,7 @@ for gr in groups:
             xa,xb=sorted((sg[0],sg[2]))
             for x in (x0,x1):
                 if xa+1<x<xb-1: verts.add((float(x),sg[1]))
+for x,y in cfg.get('splitAt',[]): verts.add((float(x),float(y)))   # 線の途中に区切りを入れる(運転指令の並べ方で、真っすぐな所に駅間の長さを持たせるため)
 verts=list(verts)
 rep={}
 for v in verts:

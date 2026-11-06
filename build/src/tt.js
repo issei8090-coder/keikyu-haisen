@@ -10,7 +10,13 @@ const hm = m => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(
 function ttKill(t) { if (t.g) { t.g.remove(); t.g = null; } if (ttSel === t) ttSelect(null); }
 function ttLoad(day) {
   ttList.forEach(ttKill); dispReset(ttList); dispReady = false; D_EV.length = 0; D_STAT = { spad: 0, emer: 0, sigwait: 0 };
-  ttDay = day; ttList = day ? TT[day].map(ttDecode).filter(t => t.ev.length > 1) : [];
+  ttDay = day;
+  ttPlanNow = null;
+  if (day && !ttFixFail && ttFixAllowed()) { const token = ++ttToken; ttList = []; $('ttinfo').textContent = '固定の計画を読み込み中…';
+    Promise.all([ttFixFind(day), fixOrderLoad(day).catch(e => { console.error(e); return null; })]).then(([F]) => { if (token !== ttToken) return; if (!F) { ttFixFail = true; ttLoad(day); return; } ttLoadFixed(day, F); }).catch(err => { console.error(err); if (token !== ttToken) return; ttFixFail = true; ttLoad(day); });
+    return; }
+  ttFixFail = false; if (day && typeof fixOrderLoad === 'function') fixOrderLoad(day).catch(e => console.error(e));   // 計算の間に読み込む(dispPlan で使う)
+  ttList = day ? TT[day].map(ttDecode).filter(t => t.ev.length > 1) : [];
   if (day) ttOps(ttList);   // 実際の運用表を当てはめる(運行番号・所属・折り返し)
   const ot = day && $('ttwait').checked ? ttOvertakes(ttList) : null;
   if (day && $('ttcouple').checked) ttCouple(ttList, day);
@@ -26,6 +32,34 @@ function ttLoad(day) {
     $('ttinfo').textContent = `折り返し・回送を計算中…`; setTimeout(step, 0);
   } else ttLoad2(day, token, 0, ot);
 }
+// 固定の計画(src/fixload.js): 埋めてある計画(運用の編集がファイルのまま)か、このブラウザに保存した計画(運用の編集のハッシュが同じ)を使う。無ければ開くときに計算して保存
+let ttFixFail = false, ttPlanNow = null;   // ttPlanNow = { day, bin(gzip), hash, info, src } いま走っている計画(書き出しに使う)
+function ttFixAllowed() {
+  if (typeof FIXKEY === 'undefined' || typeof DecompressionStream !== 'function' || ($('ttfix') && !$('ttfix').checked)) return false;
+  return ['ttlink', 'ttsiding', 'ttwait', 'ttcouple'].every(id => !$(id) || $(id).checked);
+}
+const ttOpsStr = o => { const a = Object.assign({}, o || {}); delete a.saved; delete a.geo; delete a.geoMoved; return JSON.stringify(a, Object.keys(a).sort()); };
+async function ttFixFind(day) {
+  const hash = await fixHash(ttOpsStr(USER_OPS));
+  if (ttOpsStr(USER_OPS) === ttOpsStr(USER_OPS_FILE)) { const F = await fixLoad(day); if (F) { F.hash = hash; F.src = '埋め込み'; return F; } }
+  const bin = await fixIdb('get', FIXKEY + '|' + day + '|' + hash); if (!bin) return null;
+  const F = fixRevive(await fixGunzip(bin)); F.bin = bin; F.hash = hash; F.src = 'このブラウザに保存'; return F;
+}
+function ttLoadFixed(day, F) {
+  ttPlanNow = { day, bin: F.bin, hash: F.hash, info: F.info, src: F.src };
+  ttList = F.list;
+  if (typeof ttHensei === 'function') ttHensei(ttList, { park: (st, cars, no) => F.reserve.get(String(no)) || null });
+  ttRes = F.res; D_DAY = ttDay; dispPlan(ttList); dispReady = true; if (typeof opsRefresh === 'function') opsRefresh();
+  const I = F.info; $('ttinfo').textContent = '固定の計画(' + F.src + ')・' + (D_REC_STAT ? `基準の順 ${D_REC_STAT.node + D_REC_STAT.ent} 件・` : '時刻表の順・') + (I.units ? `金沢文庫の増結 ${I.units} 本・` : '') + `折り返し ${I.nl} 件(うち引上線 ${I.siding} 件)・縦列停車 ${I.tandem} 件・通過待ちを推定 ${I.waits} 件`;
+}
+// 計算した計画を固定の形にして、このブラウザに保存(次に開くときは計算しない)。dispPlan で列車に足す前に形にする
+function ttFixSave(day, token, list, parked, res, info) {
+  let obj; try { obj = fixEncode(list, parked, res, info, FIXKEY, day); } catch (e) { console.error(e); return; }
+  Promise.all([fixGzip(obj), fixHash(ttOpsStr(USER_OPS))]).then(([bin, hash]) => {
+    if (token !== ttToken) return; ttPlanNow = { day, bin, hash, info, src: '計算' };
+    return fixIdb('put', FIXKEY + '|' + day + '|' + hash, bin);
+  }).catch(e => console.error(e));
+}
 function ttLoad2(day, token, nl, ot) {
   ttList.sort((a, b) => a.start - b.start);
   // 番線の占有を見ながら、早い列車から順に経路を確定(少しずつ計算)
@@ -37,7 +71,11 @@ function ttLoad2(day, token, nl, ot) {
     while (pre < list.length && performance.now() - t0 < 30) pl.pre(list[pre++]);
     while (pre >= list.length && idx < list.length && performance.now() - t0 < 30) pl.plan(list[idx++]);
     if (idx < list.length) { $('ttinfo').textContent = `経路を計算中… ${Math.round((pre + idx) / list.length * 50)}%`; setTimeout(work, 0); }
-    else { list.push(...pl.finish()); ttRes = pl.res; D_DAY = ttDay; dispPlan(list); dispReady = true; if (typeof opsRefresh === 'function') opsRefresh(); $('ttinfo').textContent = (pl.units.length ? `金沢文庫の増結 ${pl.units.length} 本・` : '') + (nl ? `折り返し ${nl} 件(うち引上線 ${pl.stat.siding} 件)・縦列停車 ${pl.stat.tandem || 0} 件` + (ot ? `・通過待ちを推定 ${ot.waits} 件` : '') : ''); }
+    else { list.push(...pl.finish());
+      const parked = new Map(), n0 = list.length, plW = Object.assign({}, pl, { park: (st, cars, no) => { const u = pl.park(st, cars, no); if (u) parked.set(String(no), u); return u; } });
+      if (typeof ttHensei === 'function') ttHensei(list, plW);
+      if (ttFixAllowed()) ttFixSave(day, token, list.slice(0, n0), parked, pl.res, { units: pl.units.length, siding: pl.stat.siding, tandem: pl.stat.tandem || 0, nl, waits: ot ? ot.waits : 0 });
+      ttRes = pl.res; D_DAY = ttDay; dispPlan(list); dispReady = true; if (typeof opsRefresh === 'function') opsRefresh(); $('ttinfo').textContent = (pl.units.length ? `金沢文庫の増結 ${pl.units.length} 本・` : '') + (nl ? `折り返し ${nl} 件(うち引上線 ${pl.stat.siding} 件)・縦列停車 ${pl.stat.tandem || 0} 件` + (ot ? `・通過待ちを推定 ${ot.waits} 件` : '') : ''); }
   };
   if (day) work(); else $('ttinfo').textContent = '時刻表運転はOFFです';
   if (!day) $('ttcount').textContent = '';
@@ -53,6 +91,7 @@ function ttLabelText(t) {
 // ===== 在線列車の一覧(時刻表で走っている列車すべて) =====
 let ttActive = [];
 function ttWhere(t) {   // いまどこにいるか
+  if (t.dyn) { const p = t.ph; if (t.parked) return t.parked + ' 留置'; if (t.stayAt) return t.stayAt + ' 待機'; if (!p) return '区間の外'; const st = t.dp.stops[p.k]; return p.mode === 'dwell' ? (st && st.name ? st.name + ' 停車中' : '停車中') : '→' + (t.dest || ''); }
   const T = ttClock, n = t.names.length; if (t.yard) return t.yardSt + ' ' + t.yardTr; if (t.unit || t.cut) return t.cut ? '品川' : '金沢文庫';
   let k = -1; for (let i = 0; i < n; i++) if (t.A[i + t.k0] <= T) k = i;
   if (k < 0) return t.names[0] + ' 入線';
@@ -71,7 +110,7 @@ function ttListRender() {
     ul.dataset.key = key; ul.innerHTML = '';
     act.slice().sort((a, b) => (ttRun(a).co + ttRun(a).num).localeCompare(ttRun(b).co + ttRun(b).num, 'ja')).forEach(t => {
       const li = document.createElement('li'), r = ttRun(t);
-      li.innerHTML = `<span class="dot"></span><b></b><span class="rn">${t.unit || t.cut || t.yard ? '' : r.num + ' ' + r.co}</span><small></small>`;
+      li.innerHTML = `<span class="dot"></span><b></b><span class="rn">${t.unit || t.cut || t.yard ? '' : r.num + ' ' + r.co}${typeof hsName === 'function' && hsName(t) ? ' <i class="hsn">' + hsName(t) + '</i>' : ''}</span><small></small>`;
       li.onclick = () => { ttSelect(t); }; li.onmouseenter = ev => ttOpsShow(t, ev); li.onmousemove = ttOpsMove; li.onmouseleave = ttOpsHide;
       t.li2 = li; ul.appendChild(li); });
   }
@@ -103,7 +142,7 @@ function ttOpsShow(t, ev) {
   const note = [];
   if (before) note.push(`この前の ${before.no}(${endCars(before)}両)は別の車両`);
   if (after) note.push(`この後の ${after.no}(${after.cars}両)は別の車両`);
-  box.innerHTML = `<h3>本日の運用　${r.duty && r.duty !== r.num ? r.duty + '　' : ''}${r.num} ${r.co}車　${f.cars}両　(${n}本)</h3><ol>${rows.map(li).join('')}</ol>` +
+  box.innerHTML = `<h3>本日の運用　${r.duty && r.duty !== r.num ? r.duty + '　' : ''}${r.num} ${r.co}車　${f.cars}両　(${n}本)${t.hs ? '　編成 ' + t.hs.f + (t.hs2 ? '+' + t.hs2.f : '') : ''}</h3><ol>${rows.map(li).join('')}</ol>` +
     `<p>${hm(f.ev[0].dep)} ${f.names[0]}から / ${hm(last.ev[last.ev.length - 1].arr)} ${end(last)}まで。${r.duty ? '実際の運用表のとおり' : r.key ? '同じ運行番号・同じ両数の列車を並べたもの' : '折り返しのつながり(時刻からの推定)'}${note.length ? '<br>' + note.join(' / ') : ''}</p>`;
   box.classList.toggle('wide', n > 20);
   box.hidden = false; ttOpsMove(ev);
@@ -120,11 +159,11 @@ function ttUpdate() {
   // 進み方を速くすると1回の時間が長くなる(×300 で約5秒)。区間の外の列車の動きと運転指令を、2秒以下ずつ交互に進める(5秒刻みでは区間の入口を跳び越えて全線で詰まった)
   { const L = ttDrag ? NaN : ttLastT;
     if (dispOn && dispReady && $('ttfollow').checked && isFinite(L) && T - L > 2.01 && T - L < 90) {
-      const n = Math.ceil((T - L) / 2), cs = ttList.filter(t => t.g || t.ph || (t.start <= T && t.end >= L)); let t0 = L;   // この間に走る列車だけを見る(軽くするため)
+      const n = Math.ceil((T - L) / 2), cs = ttList.concat(typeof D_DYN !== 'undefined' ? D_DYN : []).filter(t => t.g || t.ph || (t.start <= T && t.end >= L)); let t0 = L;   // この間に走る列車だけを見る(軽くするため)
       for (let i = 1; i < n; i++) { const t1 = L + (T - L) * i / n, a = []; for (const t of cs) { if (!dispTarget(t, t1)) { if (t.g) ttKill(t); dispKill(t); t.sv = null; continue; } a.push(t); } ttFollow(a, t1, t0); dispStep(a, t1, t0); t0 = t1; }
       ttLastT = t0;
     } }
-  for (const t of ttList) {
+  for (const t of ttList.concat(typeof D_DYN !== 'undefined' ? D_DYN : [])) {   // 臨時の列車(指令の指示 src/dcmd.js)も
     if (!dispTarget(t, T)) { if (t.g) ttKill(t); dispKill(t); t.sv = null; continue; }   // 区間内で遅れている列車は、時刻表の終わりを過ぎても走らせる(disp.js)
     act.push(t);
   }
@@ -212,6 +251,7 @@ $('ttlink').onchange = () => ttLoad(ttDay);
 $('ttsiding').onchange = () => ttLoad(ttDay);
 $('ttwait').onchange = () => ttLoad(ttDay);
 $('ttcouple').onchange = () => ttLoad(ttDay);
+$('ttfix').onchange = () => { ttFixFail = false; ttLoad(ttDay); };
 $('ttrate').onchange = () => { ttRate = +$('ttrate').value; };
 $('ttime').oninput = () => { ttDrag = true; ttClock = +$('ttime').value * 60; };
 $('ttime').onchange = () => { ttDrag = false; };
@@ -223,3 +263,7 @@ $('ttime').onchange = () => { ttDrag = false; };
   // 保存先(cloud.js)の編集を読んでから計算する。cloud.js は同じ script の後ろなので、読み終わってから(マイクロタスク)呼ぶ
   Promise.resolve().then(() => typeof cloudInit === 'function' ? cloudInit() : null).catch(() => { }).then(() => ttLoad($('ttday').value));
 }
+
+/*HENSEIJS*/
+/*FIXLOADJS*/
+/*PLANUI*/

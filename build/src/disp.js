@@ -3,6 +3,8 @@
 // 区間の中の時刻表列車は、実距離(m)・加減速・速度制限・信号の現示に従って走る。区間の外は今までどおり(ttFollow)。
 const DISP_CFG = /*DISPCFG*/;
 const DC = DISP_CFG, DTR = DC.train, ASP = DC.aspects;
+const D_SCOPE = (() => { if (typeof process !== 'undefined' && process.env) return process.env.SCOPE || 'kq'; try { return localStorage.getItem('kq-disp-scope') || 'kq'; } catch (e) { return 'kq'; } })();   // 運転指令の範囲: 'kq' 京急だけ / 'all' 京急+都営浅草線
+if (D_SCOPE === 'kq') DC.sections = DC.sections.filter(sc => sc.id.startsWith('kq'));   // 直通列車は泉岳寺(区間の端)で時刻表どおりに出入りする
 const KMH = v => v / 3.6;
 const D_ACC = KMH(DTR.acc), D_ACCV = KMH(DTR.accV), D_BRK = KMH(DTR.brake), D_BMAX = KMH(DTR.brakeMax), D_EMER = KMH(DTR.emer);
 const DISP_FALL = 25;   // 区間外のエッジは 図上1 = 25m とみなす(区間外では運動に使わない。位置の換算をそろえるだけ)
@@ -60,6 +62,7 @@ const D_LAYKEY = 'kq-disp-layout';
 let D_LAYEDIT = { saved: 0, st: {}, len: {} };
 try { const j = JSON.parse(localStorage.getItem(D_LAYKEY) || 'null'); if (j && j.saved) D_LAYEDIT = Object.assign({ st: {}, len: {} }, j); } catch (e) { }
 const dEdgeKey = e => { const a = N[E[e].a], b = N[E[e].b]; return [a.x.toFixed(1) + ',' + a.y.toFixed(1), b.x.toFixed(1) + ',' + b.y.toFixed(1)].sort().join('~'); };
+const D_LAYWARN = [];   // 並べ方で無理に伸ばした所(点検用)
 const dStDef = new Map();   // 駅の元の値(cfg)
 function dRowLayout(sc, r, nrow, A) {
   if (!A || A.length < 2) return null;
@@ -90,20 +93,28 @@ function dRowLayout(sc, r, nrow, A) {
     if (x1 - x0 < 0.3) return;
     cover(x0, x1, sid / 1000 / (x1 - x0)); dead.push([x0, x1]);
   });
+  // 単独の引上線(ほかの行き止まりと x が重ならない=検車区・留置線の並びではない): 長さをちょうど sid に。
+  //   同じ x の線は同じ縮尺になるので、駅の先の引上線が隣の本線の駅間ぶんまで伸びていた(京急久里浜 703m・三浦海岸 663m)。cfg の layout.capSiding:false で前の扱い
+  const reqC = new Float64Array(nI);
+  if (!(sc.layout && sc.layout.capSiding === false) && !(DC.layout && DC.layout.capSiding === false))
+    for (const [x0, x1] of dead) if (!dead.some(q => q !== undefined && (q[0] !== x0 || q[1] !== x1) && q[0] < x1 - 0.3 && x0 < q[1] - 0.3)) cover(x0, x1, sid / 1000 / (x1 - x0), reqC);
   // 画面で長さを指定した線: その長さちょうど(斜め線・引上線の決まりより優先)
   const reqX = new Float64Array(nI);
   for (const e of rowE) { const m = D_LAYEDIT.len[dEdgeKey(e)]; if (!(m > 0)) continue; const dx = dxOf(e); if (dx < 0.3) continue; cover(N[E[e].a].x, N[E[e].b].x, m / 1000 / dx, reqX); }
   // 目印(駅のホームの端・段の切れ目)の間を埋める
   const fmin = D_LAY.fmin / 1000, dens = new Float64Array(nI).fill(NaN), Aa = A.map(a => [idx(a[0]), a[1]]).sort((p, q) => p[0] - q[0]);
-  const fill = [], dv = (k, f) => reqX[k] > 0 ? reqX[k] : reqD[k] > 0 ? Math.max(reqD[k], req[k]) : Math.max(req[k], f);   // 斜め線のかかる所は決めた長さちょうど(駅間が長くても伸ばさない)
+  let useC = true; const fill = [], dv = (k, f) => reqX[k] > 0 ? reqX[k] : useC && reqC[k] > 0 ? Math.max(reqC[k], reqD[k]) : reqD[k] > 0 ? Math.max(reqD[k], req[k]) : Math.max(req[k], f);   // 斜め線のかかる所は決めた長さちょうど(駅間が長くても伸ばさない)
   for (let q = 0; q + 1 < Aa.length; q++) {
     const [i0, k0] = Aa[q], [i1, k1] = Aa[q + 1]; if (i1 <= i0) continue;
     const K = Math.max(1e-4, k1 - k0), g = f => { let s = 0; for (let k = i0; k < i1; k++) s += dv(k, f) * w[k]; return s; };
+    useC = true; if (g(1e3) < K) useC = false;   // 目印の間を引上線の上限のままでは埋められない(泉岳寺の引上線は浅草線とのつなぎ目で長さが決まる): その間は上限を使わない
     if (g(fmin) >= K) { const s = K / g(fmin); for (let k = i0; k < i1; k++) dens[k] = dv(k, fmin) * s; fill.push(fmin * s); continue; }
-    let lo = fmin, hi = fmin; while (g(hi) < K) hi *= 2;
+    let lo = fmin, hi = fmin, it0 = 0; while (g(hi) < K && it0++ < 40) hi *= 2;
+    if (g(hi) < K) { const s = K / Math.max(1e-12, g(hi)); for (let k = i0; k < i1; k++) dens[k] = dv(k, hi) * s; fill.push(hi); if (typeof D_LAYWARN !== 'undefined') D_LAYWARN.push({ sc: sc.id, r, x0: X[i0], x1: X[i1] }); continue; }   // 目印の間が決めた長さの線(斜め線・長さ指定)だけ: 同じ割合で伸ばす(前は止まらなかった)
     for (let it = 0; it < 60; it++) { const mid = (lo + hi) / 2; if (g(mid) < K) lo = mid; else hi = mid; }
     for (let k = i0; k < i1; k++) dens[k] = dv(k, hi); fill.push(hi);
   }
+  useC = true;
   const iA = Aa[0][0], iZ = Aa[Aa.length - 1][0], endF = D_LAY.endMax / 1000;
   const d0 = Math.min(endF, fill.length ? fill[0] : endF), d1 = Math.min(endF, fill.length ? fill[fill.length - 1] : endF);
   for (let k = 0; k < iA; k++) dens[k] = dv(k, d0);
@@ -116,8 +127,25 @@ function dRowLayout(sc, r, nrow, A) {
   for (const [i, km] of Aa) K[i] = km;
   return { X, K, d0, d1, sp, dead };
 }
+// 段の切れ目(※ の接続): 前の段の右端と次の段の左端に、駅間の距離を図上の長さで按分したキロ程を置く(同じ区間の中の段どうし)
+//   目印がまだ無い段(逗子線の金沢八景寄りの短い段など)は、支線のつなぎの目印を入れたあとでもう一度呼ぶ
+function dSecPortals(nrow, anc) {
+  D.portals.forEach(([na, nb]) => {
+    let ra = nrow[na], rb = nrow[nb]; if (ra < 0 || rb < 0 || ra === rb) return;
+    if (ra > rb) { [na, nb] = [nb, na]; [ra, rb] = [rb, ra]; }
+    const xa = N[na].x, xb = N[nb].x, A = anc[ra].filter(p => p[0] <= xa).pop(), B = anc[rb].find(p => p[0] >= xb);
+    if (!A || !B) return;
+    const P = (xa - A[0]) + (B[0] - xb), kp = A[1] + (B[1] - A[1]) * (xa - A[0]) / Math.max(1, P);
+    if (!anc[ra].some(p => Math.abs(p[0] - xa) < 1.5)) anc[ra].push([xa, kp]);
+    if (!anc[rb].some(p => Math.abs(p[0] - xb) < 1.5)) anc[rb].push([xb, kp]);
+    anc[ra].sort((p, q) => p[0] - q[0]); anc[rb].sort((p, q) => p[0] - q[0]);
+  });
+}
+// 画面に出すキロ程: kmNeg = 符号を反転して載せた区間(都営浅草線)、kmMirror = M - キロ程 で載せた区間(空港線・大師線: 図で本線と逆の向きに延びるので、分かれる駅で本線と同じ軸のまま折り返す)。どちらも2回かけると元に戻る
+const dKmShow = (sc, k) => sc.kmNeg ? -k : sc.kmMirror != null ? sc.kmMirror - k : k;
+const D_JOIN = [];   // 線でじかにつながる区間どうしのつなぎの線: { e, so 支線の側の区間, no その点, sin 本線の側の区間, ni その点 }
 function dInit() {
-  dSecOf.fill(-1); dKm.fill(NaN); dBy.fill(NaN); DSEC.length = 0; dSucc.clear(); dSuccP.clear(); sigByDe.clear(); SIGS.length = 0;   // 配線を直したときにやり直せるように
+  D_LAYWARN.length = 0; dSecOf.fill(-1); dKm.fill(NaN); dBy.fill(NaN); DSEC.length = 0; dSucc.clear(); dSuccP.clear(); sigByDe.clear(); SIGS.length = 0;   // 配線を直したときにやり直せるように
   // 1) 区間ごとに: 段の割り当て・駅のホームの端(目印)・同じ区間の段の切れ目
   const SI = DC.sections.map((sc, si) => {
     const inR = (q, x, y) => x >= q[0] && x <= q[1] && y >= q[2] && y <= q[3];
@@ -143,17 +171,7 @@ function dInit() {
       stInfo.set(nm, { km, len, x0, x1, xc, row: r });
     }
     anc.forEach(a => a.sort((p, q) => p[0] - q[0]));
-    // 段の切れ目(※ の接続): 前の段の右端と次の段の左端に、駅間の距離を図上の長さで按分したキロ程を置く
-    D.portals.forEach(([na, nb]) => {
-      let ra = nrow[na], rb = nrow[nb]; if (ra < 0 || rb < 0 || ra === rb) return;
-      if (ra > rb) { [na, nb] = [nb, na]; [ra, rb] = [rb, ra]; }
-      const xa = N[na].x, xb = N[nb].x, A = anc[ra].filter(p => p[0] <= xa).pop(), B = anc[rb].find(p => p[0] >= xb);
-      if (!A || !B) return;
-      const P = (xa - A[0]) + (B[0] - xb), kp = A[1] + (B[1] - A[1]) * (xa - A[0]) / Math.max(1, P);
-      if (!anc[ra].some(p => Math.abs(p[0] - xa) < 1.5)) anc[ra].push([xa, kp]);
-      if (!anc[rb].some(p => Math.abs(p[0] - xb) < 1.5)) anc[rb].push([xb, kp]);
-      anc[ra].sort((p, q) => p[0] - q[0]); anc[rb].sort((p, q) => p[0] - q[0]);
-    });
+    dSecPortals(nrow, anc);
     return { sc, si, nrow, anc, stInfo, done: false };
   });
   // 2) ほかの区間とのつなぎ目(泉岳寺 ⇔ 都営浅草線など)。sc.link = { sec: 相手の区間, off }: 相手のキロ程 + off = この区間のキロ程
@@ -174,6 +192,15 @@ function dInit() {
     } else if (oa) defer.push([sa, ra, na, sb, nb]);
     else if (ob) defer.push([sb, rb, nb, sa, na]);
   });
+  // 2b) ※ ではなく線でじかにつながる区間どうし(京急蒲田 ⇔ 空港線、京急川崎 ⇔ 大師線、金沢八景 ⇔ 逗子線、堀ノ内 ⇔ 久里浜線)。支線の側(sc.link のある側)の区間にその線を入れ、
+  //     支線の側の端の点には、本線の段の並べ方をその x までそのまま延ばしたキロ程(+off)を目印に置く。つなぎの線の長さは本線の段の縮尺で決まる(画面の「配線を編集」で直せる)
+  D_JOIN.length = 0;
+  E.forEach((e, i) => {
+    if (e.portal) return; const sa = SI.findIndex(S => S.nrow[e.a] >= 0), sb = SI.findIndex(S => S.nrow[e.b] >= 0); if (sa < 0 || sb < 0 || sa === sb) return;
+    const la = SI[sa].sc.link, lb = SI[sb].sc.link;
+    if (la && la.sec === SI[sb].sc.id) D_JOIN.push({ e: i, so: sa, no: e.a, sin: sb, ni: e.b });
+    else if (lb && lb.sec === SI[sa].sc.id) D_JOIN.push({ e: i, so: sb, no: e.b, sin: sa, ni: e.a });
+  });
   // 3) 区間ごとに並べ方を決めてキロ程を入れる
   SI.forEach(S => {
     const { sc, si, nrow, anc, stInfo } = S;
@@ -181,6 +208,15 @@ function dInit() {
       const k = conv(so, sin, dKm[ni]), P = near(S, ro, N[no].x); if (!P) continue;
       const kk = k + Math.sign(P[1] - k) * D_LINKGAP, ex = anc[ro].find(q => Math.abs(q[0] - N[no].x) < 0.3);   // 同じ所に2本(複線)なら、駅に近いほうに合わせる(どちらの線もつなぎの斜め線が見える)
       if (ex) { if (Math.abs(P[1] - kk) < Math.abs(P[1] - ex[1])) ex[1] = kk; } else anc[ro].push([N[no].x, kk]); anc[ro].sort((p, q) => p[0] - q[0]); }
+    let nj = 0;
+    for (const J of D_JOIN) { if (J.so !== si || !SI[J.sin].done) continue; const S2 = SI[J.sin], r2 = S2.nrow[J.ni], ro = nrow[J.no], x = N[J.no].x; if (r2 < 0 || ro < 0 || !S2.kmAt) continue;
+      const k = conv(si, J.sin, S2.kmAt(r2, x)); if (!isFinite(k) || anc[ro].some(q => Math.abs(q[0] - x) < 0.3)) continue;
+      // 支線の駅の目印と向きが逆にならないように(並べ方は x とともにキロ程が増える)
+      const lo = anc[ro].filter(q => q[0] < x).pop(), hi = anc[ro].find(q => q[0] > x);
+      if ((lo && k <= lo[1] + 0.005) || (hi && k >= hi[1] - 0.005)) { const a = lo ? lo[1] : (hi[1] - 0.1), b = hi ? hi[1] : (lo[1] + 0.1); anc[ro].push([x, a + (b - a) * ((x - (lo ? lo[0] : x - 1)) / Math.max(1e-6, (hi ? hi[0] : x + 1) - (lo ? lo[0] : x - 1)))]); }
+      else anc[ro].push([x, k]);
+      anc[ro].sort((p, q) => p[0] - q[0]); nj++; }
+    if (nj) dSecPortals(nrow, anc);
     const lay = DC.layout && DC.layout.off ? sc.rows.map(() => null) : sc.rows.map((_, r) => dRowLayout(sc, r, nrow, anc[r]));
     const kmAt = (r, x) => {
       const Ly = lay[r]; if (Ly) { const X = Ly.X, K = Ly.K, n = X.length; if (x <= X[0]) return K[0] - (X[0] - x) * Ly.d0; if (x >= X[n - 1]) return K[n - 1] + (x - X[n - 1]) * Ly.d1; let lo = 0, hi = n - 1; while (hi - lo > 1) { const k = (lo + hi) >> 1; if (X[k] <= x) lo = k; else hi = k; } return K[lo] + (K[hi] - K[lo]) * (x - X[lo]) / Math.max(1e-9, X[hi] - X[lo]); }
@@ -192,16 +228,19 @@ function dInit() {
       if (x > x1) return k1 + (x - x1) * sl;
       return k0 + (k1 - k0) * (x - x0) / Math.max(1e-6, x1 - x0);
     };
+    S.kmAt = kmAt;
     N.forEach((p, n) => { if (nrow[n] >= 0) { dKm[n] = kmAt(nrow[n], p.x); dBy[n] = p.y + sc.rows[nrow[n]].dy; } });
     // ホームの四角形ごとの位置: その四角形に接する線で列車が止まる点を中心に(京急蒲田の空港線側のように、駅の中心から離れた所に止まる線もある)
     for (const [nm, info] of stInfo) { const s = stByName.get(nm);
       const st = s.stops.filter(([e]) => !E[e].portal && nrow[E[e].a] === info.row && nrow[E[e].b] === info.row).map(([e, x]) => { const f = paramOf(e, x), a = E[e].a, b = E[e].b; return { x, y: N[a].y + (N[b].y - N[a].y) * f, km: dKm[a] + (dKm[b] - dKm[a]) * f }; });
       info.pk = s.plats.map(p => { const c = st.filter(q => q.y >= p[1] - 7 && q.y <= p[3] + 7).sort((u, v) => u.x - v.x); if (!c.length) return [info.km];   // 四角形ごとに、止まる点のかたまり(x が6以内)ごとの中心
         const out = []; let g = []; const flush = () => { if (g.length) out.push(g.reduce((a, q) => a + q.km, 0) / g.length); g = []; };
-        for (const q of c) { if (g.length && q.x - g[g.length - 1].x > 6) flush(); g.push(q); } flush(); return out; }); }
+        for (const q of c) { if (g.length && q.x - g[g.length - 1].x > 6) flush(); g.push(q); } flush(); return out; });
+      const pf = DC.platFix && DC.platFix[nm]; if (pf) info.pf = pf.map(r => ({ km: kmAt(info.row, r[0]), y0: r[1], y1: r[2] })); }   // 画面だけのホームの四角形の指定 [止まる点の x, 上の y, 下の y](京急蒲田: 普通専用の片面ホームと、優等・空港線の島式)
     for (const [n, y] of Object.entries(sc.byFix || {})) if (nrow[+n] >= 0) dBy[+n] = y + sc.rows[nrow[+n]].dy;   // 画面だけの縦位置の手直し(点の番号: 図の y)。長さの計算は元の図の y のまま
     const edges = [];
     E.forEach((e, i) => { if (nrow[e.a] >= 0 && nrow[e.b] >= 0 && (e.portal || nrow[e.a] === nrow[e.b])) { dSecOf[i] = si; edges.push(i); } });
+    for (const J of D_JOIN) if (J.so === si && SI[J.sin].done) { dSecOf[J.e] = si; edges.push(J.e); }   // つなぎの線は支線の側の区間に入れる(本線の側の点のキロ程は本線の区間で決めたもの。同じ軸なので線の中の位置もそのまま)
     const bnd = new Set(); edges.forEach(i => [E[i].a, E[i].b].forEach(n => { if (adj[n].some(f => dSecOf[f] !== si)) bnd.add(n); }));
     DSEC.push({ sc, id: sc.id, name: sc.name, edges, stInfo, bnd, tabs: sc.tabs, vmax: (D_LAYEDIT.vmax && D_LAYEDIT.vmax[sc.id]) || sc.vmax });   // 速度制限は画面で直したものがあればそちら
     S.done = true;
@@ -274,6 +313,21 @@ function dShift(de, u, dm) {
   }
   return { de, u };
 }
+// 手で置いた信号機を足す(est=1 = 推定の位置のまま、は足さない)
+function dManAdd(si, man, reps) {
+  for (const sp of man) { if (sp.est) continue;
+    const p = dSigLocate(si, sp.km, sp.y, sp.dn); if (!p) { D_SIGLOST.push(sp); continue; }
+    if (sp.k === '中継') { reps.push({ de: p.de, e: p.de >> 1, d: p.de & 1, u: p.u, kind: '中継', st: sp.st || null, asp: 'R', man: false, spec: sp, usr: true }); continue; }
+    const s = dAddSig(p.de, p.u, SIG_KINDS.includes(sp.k) ? sp.k : '閉塞', sp.st || null, true); s.spec = sp; s.usr = true;
+    if (sp.to) { const q = dSigLocate(si, sp.to.km, sp.to.y, sp.to.dn != null ? sp.to.dn : sp.dn, true) || dSigLocate(si, sp.to.km, sp.to.y, sp.to.dn != null ? 1 - sp.to.dn : 1 - sp.dn, true); s.toE = q ? q.de >> 1 : -1; }
+  }
+}
+// 推定の信号機を1基外す(p の位置から r m 以内でいちばん近いもの。手で置いたものは外さない)
+function dManDrop(p, r) {
+  const L = sigByDe.get(p.de); if (!L) return null; let bi = -1, bd = r;
+  L.forEach((s, i) => { if (s.usr) return; const d = Math.abs(s.u - p.u); if (d <= bd) { bd = d; bi = i; } });
+  return bi >= 0 ? L.splice(bi, 1)[0] : null;
+}
 function dAddSig(de, u, kind, st, exact) {
   const L = dEm[de >> 1]; u = Math.max(0.5, Math.min(L - 0.5, u));
   const list = sigByDe.get(de) || []; if (!sigByDe.has(de)) sigByDe.set(de, list);
@@ -302,25 +356,35 @@ function dBuildSignals() {
   for (const sec of DSEC) {
     const ES = new Set(sec.edges), deg = n => adj[n].filter(f => ES.has(f)).length, si = DSEC.indexOf(sec);
     for (const [nm, info] of sec.stInfo) info.sw = N.some((p, n) => deg(n) >= 3 && Math.abs(dKm[n] - info.km) <= info.len / 2000 + 0.3);
-    const man = D_SIGMAN && D_SIGMAN.list[sec.id];
+    const man = D_SIGMAN && D_SIGMAN.list[sec.id], noest = !!(D_SIGMAN && D_SIGMAN.noest && D_SIGMAN.noest[sec.id]);
     sec.entries = []; for (const e of sec.edges) for (const d of [0, 1]) { const de = e * 2 + d; if (dAllowed(e, d) && !E[e].portal && sec.bnd.has(dBeg(de)) && !(dPred.get(de) || []).length) sec.entries.push(de); }
-    if (man) {   // 手で置いた信号機だけ
-      for (const sp of man) {
-        const p = dSigLocate(si, sp.km, sp.y, sp.dn); if (!p) { D_SIGLOST.push(sp); continue; }
-        if (sp.k === '中継') { reps.push({ de: p.de, e: p.de >> 1, d: p.de & 1, u: p.u, kind: '中継', st: sp.st || null, asp: 'R', man: false, spec: sp }); continue; }
-        const s = dAddSig(p.de, p.u, SIG_KINDS.includes(sp.k) ? sp.k : '閉塞', sp.st || null, true); s.spec = sp;
-        if (sp.to) { const q = dSigLocate(si, sp.to.km, sp.to.y, sp.to.dn != null ? sp.to.dn : sp.dn, true) || dSigLocate(si, sp.to.km, sp.to.y, sp.to.dn != null ? 1 - sp.to.dn : 1 - sp.dn, true); s.toE = q ? q.de >> 1 : -1; }
-      }
-      continue;
-    }
+    if (man && noest) { dManAdd(si, man, reps); continue; }   // 「全部消す」にした区間: 手で置いた信号機だけ
     // 推定(駅の作りに沿って。スキル tetsudo-shingou):
     const NP = l => (l || []).filter(f => !E[f >> 1].portal);
     const isSwEnd = de => { const sc = NP(dSuccOf(de)); return sc.length >= 2 || (sc.length === 1 && NP(dPred.get(sc[0])).length >= 2); };
     const isSwBeg = de => { const pr = NP(dPred.get(de)); return pr.length >= 2 || pr.some(q => NP(dSuccOf(q)).length >= 2); };
+    // ホームの先(u0 から先)を線路に沿ってたどる: 'dead' = すぐ(150m 以内)車止め、'sw' = 次の駅のホームより手前に分岐がある(停車場なので出発)、'plain' = 分岐なし
+    //   駅の中心から±0.3km で分岐を探していたので、図の縮尺で分岐が少し離れた終着駅(羽田空港第1・第2ターミナル・小島新田など)に出発が無かった
+    function dAhead(de, u0) {
+      let x = de, len = -u0;
+      for (let g = 0; g < 40 && len < 700; g++) {
+        const e = x >> 1; len += dEm[e];
+        if (g > 0 && !isNaN(stopX[e]) && edgeStation[e] >= 0) return 'plain';   // 次の駅のホーム
+        const sc = NP(dSuccOf(x));
+        if (!sc.length) return (dSuccOf(x) || []).length ? 'plain' : adj[dEnd(x)].length <= 1 ? (len < 150 ? 'dead' : 'sw') : 'plain';   // 車止め(遠ければ引上線への入換の区切りなので出発)
+        if (sc.length >= 2 || NP(dPred.get(sc[0])).length >= 2) return 'sw';
+        if (dSecOf[sc[0] >> 1] < 0) return 'plain';
+        x = sc[0];
+      }
+      return 'plain';
+    }
     // 1) ホームの先: 分岐のある駅(停車場)は出発、無い駅(停留場)は閉塞。先に分岐があれば、その 15m 手前
+    const platIn = [];   // ホームの入口 [de, u, 駅名](あとで手前の信号機が遠ければ閉塞を置く)
     for (const [nm, info] of sec.stInfo) {
       const s = stByName.get(nm), hasSw = info.sw;
-      for (const [e, x] of s.stops) for (const d of [0, 1]) if (ES.has(e) && dAllowed(e, d)) dPlaceFwd(e * 2 + d, dStopU(e, d, x) + info.len / 2 + 8, hasSw ? '出発' : '閉塞', nm);
+      for (const [e, x] of s.stops) for (const d of [0, 1]) if (ES.has(e) && dAllowed(e, d)) { const u0 = dStopU(e, d, x) + info.len / 2 + 8, ah = dAhead(e * 2 + d, u0);
+        if (ah === 'dead') continue;   // ホームの先が車止め(終着駅の行き止まりの側): 信号機は要らない
+        dPlaceFwd(e * 2 + d, u0, hasSw || ah === 'sw' ? '出発' : '閉塞', nm); platIn.push([e * 2 + d, dStopU(e, d, x) - info.len / 2, nm]); }
     }
     const des = []; for (const e of sec.edges) for (const d of [0, 1]) if (dAllowed(e, d) && !E[e].portal) des.push(e * 2 + d);
     // 2) 分岐(対向・背向)ごとに、手前をさかのぼって何があるかで決める
@@ -370,6 +434,16 @@ function dBuildSignals() {
     // 第2場内: 手前の信号機に近いものから順に(置くたびに距離が変わる)
     inner.sort((a, b) => backSig(a, 900) - backSig(b, 900));
     for (const de of inner) { if (backSig(de, 900) > 250) dPlaceBack(de, dEm[de >> 1], 60, 110, '駅内場内', null); }
+    // ホームの入口の手前 250m 以内に信号機が無ければ、入口の 40m 手前に閉塞(出発が停止のとき、遠くの信号機から警戒 25km/h で這わない)
+    for (const [de, uIn] of platIn) {
+      let x = de, uE = uIn, len = 0, far = Infinity;
+      for (let g = 0; g < 60 && len < 900; g++) {
+        const q = (sigByDe.get(x) || []).filter(q => q.u <= uE + 0.01 && q.kind !== '中継'); if (q.length) { far = len + uE - Math.max(...q.map(q => q.u)); break; }
+        len += Math.max(0, uE); const pr = NP(dPred.get(x)); if (!pr.length || dSecOf[pr[0] >> 1] < 0) break;
+        let b = pr[0]; for (const f of pr) if (dDot(f, x) > dDot(b, x)) b = f; x = b; uE = dEm[x >> 1];
+      }
+      if (far > 250 && far < Infinity) dPlaceBack(de, uIn, 40, 40, '閉塞', null);
+    }
     // 区間の入口(図の外から入ってくる所)も信号機の区切りとみなす
     const entries = sec.entries;
     // 3) 分岐の無い一本道に、約 BLK m ごとの閉塞信号(分岐の出口からは 60m 以上あける)
@@ -396,9 +470,20 @@ function dBuildSignals() {
     }
   }
   // 推定の信号機を手で直したもの(手で置いた一覧の無い区間だけ)
-  const auto = de => !(D_SIGMAN && D_SIGMAN.list[DSEC[dSecOf[de >> 1]].id]);
+  const auto = de => !(D_SIGMAN && D_SIGMAN.noest && D_SIGMAN.noest[DSEC[dSecOf[de >> 1]].id]);
   for (const id of DC.signals.kill || []) for (const [de, list] of sigByDe) { if (!auto(de)) continue; const i = list.findIndex(s => dSigId(s) === id); if (i >= 0) list.splice(i, 1); }
   for (const a of DC.signals.add || []) if (auto(a.e * 2 + a.d)) dAddSig(a.e * 2 + a.d, a.u, a.kind || '閉塞', a.st || null);
+  // 手で直した区間: 今の推定から、消した推定・置き換えた推定を外して、手で置いた信号機を足す
+  if (D_SIGMAN) { const legacy = D_SIGMAN.v !== 2;
+    DSEC.forEach((sec, si) => { const man = D_SIGMAN.list[sec.id]; if (!man || (D_SIGMAN.noest && D_SIGMAN.noest[sec.id])) return;
+      for (const x of (D_SIGMAN.del && D_SIGMAN.del[sec.id]) || []) { const p = dSigLocate(si, x.km, x.y, x.dn); if (p) dManDrop(p, 15); }
+      for (const sp of man) { if (sp.est) continue;
+        if (sp.from) { const p = dSigLocate(si, sp.from.km, sp.from.y, sp.from.dn); if (p) dManDrop(p, 15); }
+        else if (legacy) { const p = dSigLocate(si, sp.km, sp.y, sp.dn); const g = p && dManDrop(p, 60); if (g) { const P = dPosOf(g.de, g.u); sp.from = { k: g.kind, km: Math.round(P.km * 1e4) / 1e4, y: Math.round(P.y * 100) / 100, dn: dDn(g.de) }; } }
+      }
+      for (let i = man.length - 1; i >= 0; i--) if (man[i].est) man.splice(i, 1);   // 推定の位置のままのものは持たない(いつも今の推定を使う)
+      dManAdd(si, man, reps); });
+    if (legacy) D_SIGMAN.v = 2; }
   for (const [, list] of sigByDe) for (const s of list) SIGS.push(s);
   SIGS.push(...reps);
   SIGS.forEach((s, i) => {
@@ -406,8 +491,9 @@ function dBuildSignals() {
     s.f = P.f; s.km = P.km; s.by = P.by;
     const v = dVec(s.de); s.down = v[0] > 0.05 ? true : v[0] < -0.05 ? false : null;
     s.sec = dSecOf[s.e];
-    if (!s.st) { let best = null, bd = 0.9; for (const [nm, info] of DSEC[s.sec].stInfo) { const d = Math.abs(info.km - s.km); if (d < bd) { bd = d; best = nm; } } s.st = s.kind === '閉塞' ? null : best; }
-    s.name = (s.st ? s.st + ' ' : '') + (s.down == null ? '' : s.down ? '下り' : '上り') + s.kind + (s.kind === '閉塞' || s.kind === '中継' ? ' ' + s.km.toFixed(2) + 'k' : '') + (s.spec && s.spec.to ? '(→' + (s.spec.to.n || '指定の進路') + ')' : '');
+    if (!s.st) { let best = null, bd = 0.9; const lk = DSEC[s.sec].sc.link && DSEC.find(q => q.id === DSEC[s.sec].sc.link.sec && !q.sc.kmNeg && !DSEC[s.sec].sc.kmNeg), jk = D_JOIN.filter(J => J.so === s.sec).map(J => dKm[J.ni]); for (const [nm, info] of [...DSEC[s.sec].stInfo, ...(lk ? [...lk.stInfo].filter(([, q]) => jk.some(k => Math.abs(k - q.km) < 0.9)) : [])]) { const d = Math.abs(info.km - s.km); if (d < bd) { bd = d; best = nm; } } s.st = s.kind === '閉塞' ? null : best; }   // 支線の分かれ目の信号機は、本線の駅(京急蒲田など。同じ軸)も候補に(つなぎの線のそばの駅だけ。本線と軸が同じなので、久里浜線の北久里浜〜京急久里浜に浦賀の名前が付いていた)
+    const sc = DSEC[s.sec].sc; s.dn = s.down == null ? null : sc.kmMirror != null ? !s.down : s.down;   // 名前の上り・下り(空港線・大師線は図で本線と逆向きに載せているので、図の右向き=京急蒲田・京急川崎へ向かう=上り)。s.down は図の向き(描く側)のまま
+    s.name = (s.st ? s.st + ' ' : '') + (s.dn == null ? '' : s.dn ? '下り' : '上り') + s.kind + (s.kind === '閉塞' || s.kind === '中継' ? ' ' + dKmShow(sc, s.km).toFixed(2) + 'k' : '') + (s.spec && s.spec.to ? '(→' + (s.spec.to.n || '指定の進路') + ')' : '');
   });
   // 中継信号機: まっすぐ先の、最初の(区切りになる)信号機
   for (const s of reps) {
@@ -501,7 +587,7 @@ function dSigCheck() {
       if (!pr.length || dSecOf[pr[0] >> 1] < 0) break;
       let b = pr[0]; for (const f of pr) if (dDot(f, x) > dDot(b, x)) b = f; x = b; uE = dEm[x >> 1];
     }
-    if (!ok) { const P = dPosOf(de, dEm[e]); D_LOCWARN.push({ sec: si, km: P.km, by: P.by, down: dDn(de) === 1, msg: `${facing ? '対向' : '背向'}の分岐 ${P.km.toFixed(3)}km(${dDn(de) ? '下り' : '上り'}方向)を守る場内・出発・入換が、手前500m以内にありません` }); }
+    if (!ok) { const P = dPosOf(de, dEm[e]); D_LOCWARN.push({ sec: si, km: P.km, by: P.by, down: dDn(de) === 1, msg: `${facing ? '対向' : '背向'}の分岐 ${dKmShow(DSEC[si].sc, P.km).toFixed(3)}km(${(dDn(de) === 1) !== (DSEC[si].sc.kmMirror != null) ? '下り' : '上り'}方向)を守る場内・出発・入換が、手前500m以内にありません` }); }
   }
 }
 // 信号機を置き直す(画面で編集したとき)。列車の経路の表は作り直す
@@ -509,7 +595,7 @@ function dRebuildSignals(list) {
   const keep = []; for (const t of list || []) if (t.ph) keep.push([t, t.ph]);   // 走っている列車の状態(停車中か・次の停車駅・速さ・遅れ)
   sigByDe.clear(); SIGS.length = 0; dBuildSignals(); dSigCheck();
   for (const t of list || []) { t.ph = null; t.dLocks = null; t.dStill = false; t.dp = null; }
-  D_LOCK.clear(); D_LOCKN.clear();
+  D_LOCK.clear(); D_LOCKN.clear(); for (const [, S] of D_SGL) S.run.lock = null;
   // 画面で信号機を置き直したとき: 状態を捨てると、停車中の列車が発車時刻を待たずに走り出し(次の停車駅を飛ばす)、速さも時刻表の速さに変わり、時刻表の終わりを過ぎて走っていた列車は消えた。新しい信号機で区間を取り直し、状態はそのまま続ける
   for (const [t, o] of keep) { const dp = dPrep(t), rg = dp.ranges.find(r => o.m >= r.m0 - 0.01 && (o.m < r.m1 || (r.i1 === t.route.segs.length && o.m <= r.m1 + 1))); if (rg) dStart(t, D_NOW, rg, o); }
 }
@@ -647,7 +733,7 @@ let D_LOSS = null;   // 検査用: 予定外に止まった・発車が遅れた
 const dLoss = (k, dt) => D_LOSS.set(k, (D_LOSS.get(k) || 0) + dt);   // 出来事の記録(非常ブレーキ・信号冒進・長い信号待ちなど)
 let D_STAT = { spad: 0, emer: 0, sigwait: 0 };
 const dPartner = (a, b) => a === b || a.cplWith === b || b.cplWith === a || a.next === b || b.next === a;   // 連結の相手・折り返しの前後(同じ車両)
-const dLen = t => t.cut || t.unit ? 4 * DTR.carLen : Math.max(36, (t.cars || 6) * DTR.carLen);
+const dLen = t => t.cut || t.unit ? 4 * DTR.carLen : Math.max(36, ((t.cars || 6) + (t.c12pre && (t.extB || t.extF) ? 4 : 0)) * DTR.carLen);   // c12pre: 金沢文庫で4両を切り離す下り(ttShape が切り離すまで extB/extF を付ける)
 function dEvent(T, t, kind, text) { D_EV.push({ T, no: t ? t.no : '', kind, text }); if (D_EV.length > 400) D_EV.splice(0, D_EV.length - 400); }
 // 1台ぶんの占有(エッジごとの区間)
 function dOccOf(t) {
@@ -657,10 +743,10 @@ function dOccOf(t) {
 function dBuildOcc(act) {
   D_OCC.clear(); D_OCCN.clear();
   for (const t of act) {
-    if (!t.route || t.s == null || isNaN(t.s)) continue;
+    if (!t.route || t.s == null || isNaN(t.s) || (t.gOut != null && D_NOW >= t.gOut)) continue;
     let sp; if (!t.ph && t._occS === t.s && t._occR === t.route && t._occC === t.cars && t._occL) sp = t._occL; else { sp = dOccOf(t); if (!t.ph) { t._occS = t.s; t._occR = t.route; t._occC = t.cars; t._occL = sp; } else t._occL = null; }   // 区間の外の列車は1回の中で動かないので、前の結果を使う(軽くするため)
     for (const s of sp) {
-      if (!D_OCC.has(s.e)) D_OCC.set(s.e, []); D_OCC.get(s.e).push({ t, lo: s.lo, hi: s.hi });
+      if (!D_OCC.has(s.e)) D_OCC.set(s.e, []); D_OCC.get(s.e).push({ t, lo: s.lo, hi: s.hi, i: s.i });
       const Em = dEm[s.e]; if (s.lo < 12) D_OCCN.set(E[s.e].a, t); if (s.hi > Em - 12) D_OCCN.set(E[s.e].b, t);
       for (const x of D_XBY.get(s.e) || []) if (x.u >= s.lo - 12 && x.u <= s.hi + 12) D_OCCN.set(x.n, t);   // シーサスの交差点にかかっている
     }
@@ -704,21 +790,22 @@ function dOrderBlock(t, b) {
   if (!D_NODEQ.size || !b.nodes.length) return null;
   for (const { n: nd, m } of b.nodes) {
     const q = D_NODEQ.get(nd); if (!q) continue;
-    const tT = dKnT(t, t.dp.m2s(m)); if (isNaN(tT)) continue;   // 相手の時刻(D_NODEQ)と同じ式で(dSchedAt はメートルで割り振るので、区間の外から長く止まらない列車ではずれる)
+    const sm = t.dp.m2s(m), own = q.find(c => c.o === t && Math.abs(c.d - sm) < 1.5), tT = own && own.R ? own.T : dKnT(t, sm); if (isNaN(tT)) continue;   // 相手の時刻(D_NODEQ)と同じ式で(dSchedAt はメートルで割り振るので、区間の外から長く止まらない列車ではずれる)
     for (const c of q) {
       if (c.T >= tT + 30) break;
-      if (c.T > tT - 30 && c.o !== t) { const f = dFirstAtNext(c.o, c.T, t, tT); if (f === false || (f == null && c.T >= tT - 1)) continue; }   // 30秒以内に並ぶときは、次に両方が止まる駅に着く順
+      if (own && own.R && c.R) { if (c.T >= tT) continue; }   // 基準の走りの順
+      else if (c.T > tT - 30 && c.o !== t) { const f = dFirstAtNext(c.o, c.T, t, tT); if (f === false || (f == null && c.T >= tT - 1)) continue; }   // 30秒以内に並ぶときは、次に両方が止まる駅に着く順
       else if (c.T >= tT - 1) continue;
       if (c.T < tT - 1200) continue;
       const o = c.o; if (o === t || dPartner(o, t)) continue;
       if (dNodePassed(o, c)) continue;
-      const eta = dNodeEta(o, c); if (eta > Math.max(D_NOW, tT) + D_SWAP) continue;
+      const eta = dNodeEta(o, c); if (D_AUTO && eta > Math.max(D_NOW, tT) + D_SWAP) continue;
       if (!o.ph && eta > D_NOW + 60 && !(o.prev && o.prev.ph) && !(o.sv != null && o.route && dSecOf[segAt(o.route, Math.max(0, Math.min(o.route.total, o.s))).e] >= 0)) continue;   // 現れたばかりで区間の中にいる列車も同じ   // 前の運用が区間の中にいる折り返し(引上線から出る列車など)は区間の中の列車と同じに扱う   // 区間の外の列車には、すぐ(60秒以内に)来るときだけ譲る(譲らない版は土休日の3分超が 0→20 本に増えた)
-      if (dChainTo(o, t)) continue;
+      if (dChainTo(o, t)) { if (!D_AUTO) dDeadLog(t, o, '分岐'); continue; }
       const pv = !o.ph && o.prev && o.prev.ph && o.prev !== t && !dChainTo(o.prev, t) ? o.prev : null;   // 前の運用(同じ車両)が区間の中を走ってくる・着いたところの折り返しの列車(もうすぐ現れる)
-      if ((o.dHeld && !pv) || (o.ph && o.ph.mode === 'run' && o.ph.v < 0.1 && (o.ph.waitT || 0) > 20)) continue;   // 相手が止められている(動けない)なら譲らない
+      if (D_AUTO && ((o.dHeld && !pv) || (o.ph && o.ph.mode === 'run' && o.ph.v < 0.1 && (o.ph.waitT || 0) > 20))) continue;   // 相手が止められている(動けない)なら譲らない
       // 同じ相手に 90 秒以上譲ったら、順序を変えて先に行く
-      const w = t.dOrdW || (t.dOrdW = new Map()); const mv = o.ph || (pv && pv.ph); if (!w.has(o) || (mv && mv.v > 0.5)) w.set(o, D_NOW); if (D_NOW - w.get(o) > 90) continue;   // 相手が動いている間は数えない
+      const w = t.dOrdW || (t.dOrdW = new Map()); const mv = o.ph || (pv && pv.ph); if (!w.has(o) || (mv && mv.v > 0.5)) w.set(o, D_NOW); if (D_AUTO && D_NOW - w.get(o) > 90) continue;   // 相手が動いている間は数えない
       return o;
     }
   }
@@ -737,29 +824,69 @@ function dEntOrder(t, b) {
     const c = D_ENTQ[i]; if (c.T > tE + D_SWAP) break;
     const o = c.o; if (o === t || dPartner(o, t) || o.ph || o.sv == null || !o.route || o.unit || o.cut || o.yard) continue;   // 区間の外に見えている列車だけ
     const dpo = dPrep(o), rg = dpo.ranges[c.ri]; if (!rg || dpo.s2m(o.s) >= rg.m0) continue;
-    const eta = D_NOW + Math.max(0, dKnT(o, c.d) - dKnT(o, o.s)); if (eta > tE - 30 || eta > D_NOW + D_SWAP) continue;
+    const eta = D_NOW + Math.max(0, dKnT(o, c.d) - dKnT(o, o.s)); if (eta > tE - 30 || (D_AUTO && eta > D_NOW + D_SWAP)) continue;
     if (o.dLocks && o.dLocks.has(-1 - c.ri)) continue;
     let hit = false; for (const ob of dEntNeed(o, rg, dBlock(o, -1 - c.ri, rg), dLen(o))) { for (const x of ob.spans) { for (const y of b.spans) if (x.e === y.e && x.lo < y.hi - 0.5 && y.lo < x.hi - 0.5) { hit = true; break; } if (hit) break; } if (hit) break; }
     if (!hit || dChainTo(o, t)) continue;
-    const w = t.dOrdW || (t.dOrdW = new Map()); if (!w.has(o)) w.set(o, D_NOW); if (D_NOW - w.get(o) > 90) continue;   // 同じ相手に 90 秒以上譲ったら先に行く
+    const w = t.dOrdW || (t.dOrdW = new Map()); if (!w.has(o)) w.set(o, D_NOW); if (D_AUTO && D_NOW - w.get(o) > 90) continue;   // 同じ相手に 90 秒以上譲ったら先に行く
     return o;
   }
   return null;
 }
+// 止まっている列車が次に動く向き(エッジ e の上で、a→b なら +1、b→a なら -1、分からなければ 0)。着いて終わった列車は、同じ車両の次の運用の向き
+function dNextDir(o, e) {
+  const tr = o.t, sg = tr.route && tr.route.segs; if (!sg) return 0;
+  const done = tr.ph ? tr.ph.done : tr.s >= tr.route.total - 0.5;
+  if (!done && o.i != null && sg[o.i] && sg[o.i].e === e) return Math.sign(sg[o.i].t1 - sg[o.i].t0);
+  const nx = done ? tr.next : null, ns = nx && nx.route && nx.route.segs; if (ns) for (let k = 0; k < Math.min(6, ns.length); k++) if (ns[k].e === e) return Math.sign(ns[k].t1 - ns[k].t0);
+  return 0;
+}
+// 誘導で止まっている列車の後ろへ入ってよいか: その列車が、こちらへ向かって出ていくなら入れない(堀ノ内で、始発の下りが待つホームへ上りを誘導で入れ、互いに相手の前をふさいだ)
+const dYudoDirOK = (t, s, o) => { const g = t.route.segs[s.i]; if (!g || g.e !== s.e) return true; const dn = dNextDir(o, s.e); return dn === 0 || dn === Math.sign(g.t1 - g.t0); };
 // 止まっている列車が、いま止まっている区間に持っている進路(入換信号機なら、その後ろへ入ってよい)
 const dStandLock = k => !!(k.t.dStill && k.t.ph && (k.j < 0 || k.j === k.t.ph.lastSig));
+// 単線のまとまり: エッジ → { run, o }(o = そのエッジの a→b がまとまりの向きの +1 か -1)。run.lock = { dir, hold: Set(列車) }
+const D_SGL = new Map();
+function dSglBuild(list) {
+  D_SGL.clear(); const dirs = new Map();
+  for (const t of list) { if (!t.route || !t.route.segs) continue; for (const g of t.route.segs) { if (dSecOf[g.e] < 0 || E[g.e].portal) continue; const v = g.t1 > g.t0 ? 1 : g.t1 < g.t0 ? 2 : 0; if (v) dirs.set(g.e, (dirs.get(g.e) || 0) | v); } }
+  const ok = e => dirs.get(e) === 3 && isNaN(stopX[e]) && adj[E[e].a].length > 1 && adj[E[e].b].length > 1;
+  let nRun = 0;
+  for (const [e0] of dirs) { if (D_SGL.has(e0) || !ok(e0)) continue;
+    const run = { id: e0, lock: null, edges: [e0] }; D_SGL.set(e0, { run, o: 1 }); nRun++;
+    for (const fwd of [true, false]) {   // b の側へ(向き +)、a の側へ(向き -)のばす
+      let prev = e0, n = fwd ? E[e0].b : E[e0].a;
+      for (let g = 0; g < 400 && adj[n].length === 2; g++) { const f = adj[n][0] === prev ? adj[n][1] : adj[n][0]; if (D_SGL.has(f) || !ok(f)) break;
+        const o = fwd ? (E[f].a === n ? 1 : -1) : (E[f].b === n ? 1 : -1); D_SGL.set(f, { run, o }); run.edges.push(f); prev = f; n = E[f].a === n ? E[f].b : E[f].a; } } }
+  return nRun;
+}
+const dSglHas = (run, h) => run.edges.some(e => (D_LOCK.get(e) || []).some(k => k.t === h) || (D_OCC.get(e) || []).some(o => o.t === h));
+function dSglBlocked(t, b) {   // 反対向きに押さえている列車(いなければ null)
+  for (const sp of b.spans) { const S = D_SGL.get(sp.e); if (!S) continue; const L = S.run.lock; if (!L) continue;
+    const g = t.route.segs[sp.i], d = Math.sign(g.t1 - g.t0) * S.o; if (!d || L.dir === d) continue;
+    for (const h of [...L.hold]) if (h === t || dPartner(h, t) || !dSglHas(S.run, h)) L.hold.delete(h);
+    if (!L.hold.size) { S.run.lock = null; continue; }
+    return L.hold.values().next().value; }
+  return null;
+}
+function dSglLock(t, b) {
+  for (const sp of b.spans) { const S = D_SGL.get(sp.e); if (!S) continue; const g = t.route.segs[sp.i], d = Math.sign(g.t1 - g.t0) * S.o; if (!d) continue;
+    const L = S.run.lock; if (!L || L.dir !== d) S.run.lock = { dir: d, hold: new Set([t]) }; else L.hold.add(t); }
+}
 function dFree(t, b, yudoOK, order, shunt) {
-  let res = 1; t.dWhy = ''; t.dByT = null;   // dByT: ふさいでいる列車(待避の行き詰まりを見るのに使う)
+  let res = 1; t.dWhy = ''; t.dByT = null;
+  { const o = dSglBlocked(t, b); if (o) { t.dWhy = '単線 ' + o.no; t.dByT = o; return 0; } }   // 単線を反対向きに押さえている列車がいる   // dByT: ふさいでいる列車(待避の行き詰まりを見るのに使う)
   for (const s of b.spans) for (const q of D_SPAWNQ.get(s.e) || []) { const o = q.t; if (o !== t && !dPartner(o, t) && o !== t.next && o.sv == null && !o.ph && D_NOW >= o.start - 120 && D_NOW <= o.start + 600 && q.lo <= s.hi && s.lo <= q.hi) { t.dWhy = '入線待ち ' + o.no; t.dByT = o; return 0; } }   // これから(前の運用なしで)ホームに現れる列車の場所へは、現れる2分前から進路を取らない
   for (const s of b.spans) {
-    for (const o of D_OCC.get(s.e) || []) if (!dPartner(o.t, t) && o.lo <= s.hi + 2 && s.lo <= o.hi + 2) { if (yudoOK && o.t.dStill) res = 2; else { t.dWhy = '在線 ' + o.t.no; t.dByT = o.t; return 0; } }
-    for (const k of D_LOCK.get(s.e) || []) if (!dPartner(k.t, t) && k.lo < s.hi - 0.5 && s.lo < k.hi - 0.5) { if (shunt && yudoOK && dStandLock(k)) { res = 2; continue; } t.dWhy = '進路 ' + k.t.no; t.dByT = k.t; return 0; }
+    for (const o of D_OCC.get(s.e) || []) if (!dPartner(o.t, t) && o.lo <= s.hi + 2 && s.lo <= o.hi + 2) { if ((yudoOK && o.t.dStill && dYudoDirOK(t, s, o)) || o.t === t.gTgt) res = 2; else { t.dWhy = '在線 ' + o.t.no; t.dByT = o.t; return 0; } }
+    for (const k of D_LOCK.get(s.e) || []) if (!dPartner(k.t, t) && k.lo < s.hi - 0.5 && s.lo < k.hi - 0.5) { if (k.t === t.gTgt || (shunt && yudoOK && dStandLock(k))) { res = 2; continue; } t.dWhy = '進路 ' + k.t.no; t.dByT = k.t; return 0; }
   }
-  for (const { n: nd } of b.nodes) { const o = D_LOCKN.get(nd); if (o && !dPartner(o.t, t) && !(shunt && yudoOK && dStandLock(o) && (res = 2))) { t.dWhy = '分岐の進路 ' + o.t.no; t.dByT = o.t; return 0; } const q = D_OCCN.get(nd); if (q && !dPartner(q, t) && !(yudoOK && q.dStill)) { t.dWhy = '分岐に在線 ' + q.no; t.dByT = q; return 0; } }
+  for (const { n: nd } of b.nodes) { const o = D_LOCKN.get(nd); if (o && !dPartner(o.t, t) && o.t !== t.gTgt && !(shunt && yudoOK && dStandLock(o) && (res = 2))) { t.dWhy = '分岐の進路 ' + o.t.no; t.dByT = o.t; return 0; } const q = D_OCCN.get(nd); if (q && !dPartner(q, t) && q !== t.gTgt && !(yudoOK && q.dStill)) { t.dWhy = '分岐に在線 ' + q.no; t.dByT = q; return 0; } }
   if (order) { const o = dOrderBlock(t, b); if (o) { t.dWhy = '順序 ' + o.no; t.dByT = o; return 0; } }   // 分岐の進路は時刻表の順に(区間の中を走っている列車が前方の進路を取るときだけ)
   return res;
 }
 function dLock(t, b, kind) {
+  dSglLock(t, b);
   for (const s of b.spans) { if (!D_LOCK.has(s.e)) D_LOCK.set(s.e, []); D_LOCK.get(s.e).push({ t, lo: s.lo, hi: s.hi, j: b.j, m1: s.m1 }); }
   for (const { n: nd, m } of b.nodes) D_LOCKN.set(nd, { t, j: b.j, m });
   (t.dLocks || (t.dLocks = new Map())).set(b.j, kind);
@@ -877,7 +1004,7 @@ function dStart(t, T, rg, o) {   // o: 信号機を置き直す前の状態(dReb
   if (o) k = o.k; else p.k = k;
   const st = dp.stops[k];
   if (o) ;
-  else if (st && m > st.m - 2 && m <= Math.max(st.m, dStopX(st, L) - L / 2) + 2) { p.mode = 'dwell'; p.m = m; p.arrT = T <= st.P + 1 ? Math.min(T, st.A) : T; if (k >= dp.stops.length - 1) p.done = true; }
+  else if (st && m > st.m - 2 && m <= Math.max(st.m, dStopX(st, L) - L / 2) + 2) { p.mode = 'dwell'; p.m = m; p.arrT = T <= st.P + 1 ? Math.min(T, st.A) : T; p.paxDw = dPaxNeed(t, st, p.arrT); if (k >= dp.stops.length - 1) p.done = true; }
   else {   // 走っている途中で区間に入った: 時刻表どおりの速さから始める
     const K = dp.kn.find(x => x.m > m + 5 && x.t > T);
     p.v = K ? Math.min(KMH(ASP.G), Math.max(KMH(30), (K.m - m) / Math.max(10, K.t - T) * 1.15)) : KMH(60);
@@ -913,7 +1040,7 @@ function dStepTrain(t, T, dt) {
   const look = Math.max(2200, p.v * p.v / (2 * D_BRK) + 900);
   if (p.needJ0 != null) {   // 止まっている区間の進路: 発車できる時刻(30秒前)になってから取る
     const s0 = dp.stops[p.k];
-    if (!p.hold && (!s0 || (T >= s0.P - 30 && !dWaiting(t, s0.k, T)))) { const b = dBlock(t, p.needJ0, rg); if (dFree(t, b, false, true) === 1) { dLock(t, b, 1); p.needJ0 = null; } }   // 発車の進路も時刻表の順に
+    if (!p.hold && (!s0 || (T >= s0.P - (t.lockEarly || 30) && !dWaiting(t, s0.k, T)))) { const b = dBlock(t, p.needJ0, rg); if (dFree(t, b, false, true) === 1) { dLock(t, b, 1); p.needJ0 = null; } }   // 発車の進路も時刻表の順に
   }
   // 自分の前(次の信号機まで)に別の列車がいるなら、その先の区間は取らない(前の列車が先に進む。途中から始めたときに時刻表の位置で同じ区間に2本置かれ、後ろの列車が先の区間を取って、前の列車と互いに動けなくなった)
   let ahead = null; { const S1 = dp.sig[p.lastSig + 1]; if (S1 && S1.m > front + 0.5) for (const sp of dp.spans(front + 0.5, S1.m)) { for (const o of D_OCC.get(sp.e) || []) if (o.t !== t && !o.t.cut && !o.t.unit && !dPartner(o.t, t) && o.lo <= sp.hi + 1 && sp.lo <= o.hi + 1) { ahead = o.t; break; } if (ahead) break; } }
@@ -939,16 +1066,18 @@ function dStepTrain(t, T, dt) {
     if (!st) { p.done = true; return; }
     if (p.k >= dp.stops.length - 1) { p.done = true; return; }
     p.delay = Math.max(0, T - st.P);
-    if (T >= st.P && D_LOSS) { const c = p.hold ? '抑止' : p.needJ0 != null ? '発車の進路待ち ' + (st.name || '') + (t.dWhy ? '[' + t.dWhy.replace(/ .*/, '') + ']' : '') : T < p.arrT + st.minDw ? '着いたのが遅い(最短停車) ' + (st.name || '') : null; if (c) dLoss(c, dt); }
-    if (T < st.P || T < p.arrT + st.minDw || p.hold || p.needJ0 != null) return;
+    if (T >= st.P && D_LOSS) { const c = p.hold ? '抑止' : p.needJ0 != null ? '発車の進路待ち ' + (st.name || '') + (t.dWhy ? '[' + t.dWhy.replace(/ .*/, '') + ']' : '') : T < p.arrT + Math.max(st.minDw, p.paxDw || 0) ? (p.paxDw > st.minDw ? '乗り降り(混雑) ' : '着いたのが遅い(最短停車) ') + (st.name || '') : null; if (c) dLoss(c, dt); }
+    if (T < st.P || T < p.arrT + Math.max(st.minDw, p.paxDw || 0) || p.hold || p.needJ0 != null || (p.incDw != null && T < p.incDw)) return;
     const wo = dWaiting(t, st.k, T); p.waitFor = wo; if (wo) { if (D_LOSS) dLoss('待避で発車待ち ' + (st.name || ''), dt); return; }
     if (D_LOG) D_LOG.push({ t, no: t.no, dep: true, name: st.name, k: st.k, late: T - st.P, T });   // 発車の記録(秒の調整 disp_tune で使う)
+    { const pk = dPaxKey(t, st); if (pk) D_LASTDEP.set(pk, T); const ex = Math.min(T, p.arrT + (p.paxDw || 0)) - Math.max(st.P, p.arrT + st.minDw); if (p.paxDw > st.minDw && ex > 1) { D_CROWDSTAT.n++; D_CROWDSTAT.sum += ex; D_CROWDSTAT.max = Math.max(D_CROWDSTAT.max, ex); if (ex > 30) dEvent(T, t, 'late', `${st.name || ''} で乗り降りに ${Math.round(p.paxDw)}秒(混雑・前の列車から間があいた)`); } }
     p.mode = 'run'; p.k++; while (p.k < dp.stops.length && dp.stops[p.k].thru) p.k++;
     { const ev = st.k - t.k0 < t.names.length - 1 && t.ev[st.k - t.k0], od = ev ? T - (ev.dep * 60 + 59) : 0; if (od > 0) dEvent(T, t, 'late', `${st.name || ''} を時刻表より ${Math.round(od)}秒 遅れて発車`); }   // 遅れは時刻表の分(その分の59秒まで)に対して
   }
   // 速さの上限を集める
   const st = dp.stops[p.k], X = st ? dStopX(st, L) : dp.total + L / 2;
   let cur = Math.min(p.blkV, KMH(ASP.G)), vT = Infinity, why = '';
+  if (p.incCap != null) cur = Math.min(cur, p.incCap);   // 指令の徐行・故障車の自走(src/radio.js)
   const brakeTo = (x, V) => { const dist = Math.max(0, x - front); return Math.max(V, -D_BRK * dt + Math.sqrt(D_BRK * D_BRK * dt * dt + V * V + 2 * D_BRK * dist)); };
   let stopAt = X;
   for (const l of dp.lim) { if (l.m0 > front + 1500) break; if (front >= l.m0 && tail <= l.m1) cur = Math.min(cur, l.v); else if (l.m0 > front) vT = Math.min(vT, brakeTo(l.m0, l.v)); }
@@ -966,7 +1095,8 @@ function dStepTrain(t, T, dt) {
     const g = t.route.segs[s.i], fwd = g.t1 >= g.t0, x = fwd ? Math.max(o.lo, s.lo) : Math.min(o.hi, s.hi);
     const mm = dp.M[s.i] + Math.abs(x / dEm[g.e] - g.t0) * dEm[g.e]; if (mm > front - 0.5 && mm < obs) { obs = mm; p.obsT = o.t; }
   }
-  if (obs < Infinity) stopAt = Math.min(stopAt, obs - 8);
+  if (obs < Infinity) stopAt = Math.min(stopAt, obs - (p.obsT && p.obsT === t.gTgt ? 1.5 : 8));   // 救援: 連結するので間を詰める
+  if (p.incStop != null && p.incStop < stopAt) { stopAt = p.incStop; why = '事故・故障'; }   // 車両故障・人身事故で止まる
   vT = Math.min(vT, cur, brakeTo(stopAt, 0));   // 安全のための上限(信号・制限・前の列車)
   // 時刻表より早く走らない(次の時刻の目標に間に合う一番遅い速さ)。こちらはゆるやかに落とす
   const K = dp.kn.find(x => x.m > p.m + 1);
@@ -994,7 +1124,7 @@ function dStepTrain(t, T, dt) {
   if (p.v < 0.1 && stopAt < X - 1) { p.waitT += dt; if (p.waitT > 120 && !p.waitW) { p.waitW = true; D_STAT.sigwait++; dEvent(T, t, 'wait', `${why || '前の列車'} で2分以上停止`); } } else { p.waitT = 0; p.waitW = false; }
   // 停車駅に着いた
   if (st && front >= X - 0.3 && p.v < 0.2) {
-    p.v = 0; p.m = Math.max(p.m, X - L / 2); p.mode = 'dwell'; p.arrT = T; p.delay = Math.max(0, T - st.A);
+    p.v = 0; p.m = Math.max(p.m, X - L / 2); p.mode = 'dwell'; p.arrT = T; p.delay = Math.max(0, T - st.A); p.paxDw = dPaxNeed(t, st, T);
     if (D_LOG) D_LOG.push({ t, no: t.no, name: st.name, k: st.k, late: T - st.A, T });
     if (p.k >= dp.stops.length - 1) p.done = true;
   }
@@ -1032,6 +1162,7 @@ function dispStep1(act, T, lastT) {
   const dt = T - lastT; D_NOW = T;
   if (!dispOn || !dispReady) { if (D_LOCK.size || act.some(t => t.ph)) dispReset(act); return; }
   if (!(dt > 0 && dt < 90)) { dispReset(act); dLastT = T; return; }
+  if (typeof dIncStep === 'function') dIncStep(act, T);   // 事故・支障の始まり・終わり(src/dinc.js)
   // 区間を出た直後など、物理で走った列車が時刻表の位置より先にいるとき、追従(ttFollow)で後ろへ戻さない
   for (const t of act) { if (t.dHi != null && t.dHiR === t.route && t.s < t.dHi) t.s = t.sv = t.dHi; if (!t.ph && t.dEntLim != null && t.dEntR === t.route && t.s > t.dEntLim) t.s = t.sv = t.dEntLim; }   // 入口で待っている列車は、入口が空くまで止めた位置より先へ出さない
   const n = Math.max(1, Math.ceil(dt / 0.5)), h = dt / n;
@@ -1039,7 +1170,7 @@ function dispStep1(act, T, lastT) {
     const Tk = lastT + h * k;
     dBuildOcc(act);
     for (const t of act) {
-      if (!t.route || t.unit || t.cut || t.yard) continue;
+      if (!t.route || t.unit || t.cut || t.yard || (t.gOut != null && Tk >= t.gOut)) continue;
       const dp = dPrep(t);
       if (!dp.ranges.length) continue;
       const m = t.ph ? t.ph.m : dp.s2m(t.s);
@@ -1060,7 +1191,7 @@ function dispStep1(act, T, lastT) {
 }
 function dispReset(act) {
   for (const t of act || []) { t.ph = null; t.dLocks = null; t.dStill = false; t.dHi = null; t.dVO = null; t.dOver = false; t.dEntLim = null; }
-  D_LOCK.clear(); D_LOCKN.clear(); D_NEEDWARM = true;
+  D_LOCK.clear(); D_LOCKN.clear(); for (const [, S] of D_SGL) S.run.lock = null; D_NEEDWARM = true; D_DEADLOG.clear();
 }
 // 途中の時刻から始めたとき(時刻を飛ばした・スライダーを動かした): 全列車を時刻表の位置に置いてすぐ信号で走らせると、
 // 閉塞の間隔より近い列車から詰まりが連鎖する。表示する前に D_WARM 秒前から、画面に出さずに早回しで走らせておく
@@ -1151,7 +1282,7 @@ function dRelayout(list) {
   const keep = []; for (const t of list || []) if (t.ph && t.dp) keep.push([t, t.ph, t.dp.m2s(t.ph.m)]);
   dInit(); dBuildXby(); dSigCheck();
   for (const t of list || []) { t.ph = null; t.dLocks = null; t.dStill = false; t.dp = null; t._occL = null; }
-  D_LOCK.clear(); D_LOCKN.clear(); if (list && list.length) dSpawnQ(list);
+  D_LOCK.clear(); D_LOCKN.clear(); for (const [, S] of D_SGL) S.run.lock = null; if (list && list.length) dSpawnQ(list);
   for (const [t, o, s] of keep) { const dp = dPrep(t); o.m = dp.s2m(s); const rg = dp.ranges.find(r => o.m >= r.m0 - 0.01 && (o.m < r.m1 || (r.i1 === t.route.segs.length && o.m <= r.m1 + 1))); if (rg) dStart(t, D_NOW, rg, o); }
 }
 // ===== 時刻表運転とのつなぎ =====
@@ -1162,6 +1293,7 @@ const dThru = t => !!t.route && (t.dIn != null ? t.dIn : (t.dIn = t.route.segs.s
 // まだ走っている(区間の中で物理運転中・時刻表の終わりを過ぎて走りきる途中・区間の外で経路の終わりにまだ着いていない・前の運用を待っていてまだ出ていない)
 const dLive = (o, T) => !!o && ((o.ph && !o.ph.done) || o.dOver || (!o.ph && o.sv != null && !o.unit && !o.cut && !o.yard && o.s < o.route.total - 0.5) || (o.dHeld && o.sv == null && T <= o.end));
 function dispTarget(t, T) {
+  if (t.gOut != null && T >= t.gOut) return false;   // 運転を打ち切って盤面から外した列車(src/radio.js。回送で車庫へは次の版で走らせる)
   if (dispOn && !t.ph && t.sv == null && t.prev && dLive(t.prev, T) && T >= t.start && T < t.start + 3600) { if (T < t.end) t.dHeld = true; t.dOver = false; return false; }   // 同じ車両の前の運用が終わるまで次を出さない
   if (ttTarget(t, T)) {
     t.dOver = false;
@@ -1176,15 +1308,19 @@ function dSpawnBlocked(t) {
   if (!t.route || t.unit || t.cut || t.yard) return false;
   const dp = dPrep(t), m = dp.s2m(t.dHeld && !t.dHeldMid && t.sd ? t.sd[0] : t.tgt != null ? t.tgt : t.s), L = dLen(t);
   const pr = t.prev, pg = pr && pr.route && pr.route.segs[pr.route.segs.length - 1], ho = !!(pg && t.route.segs[0] && pg.e === t.route.segs[0].e && m < t.route.segs[0].d1 + L);   // 同じ車両が着いた線から折り返して出る(受け渡し): 進路はその車両がいるのを承知で(誘導などで)取られているので、進路は見ない   // 現れる位置(時刻表の位置 tgt)。t.s は前に出ていたときの位置のまま(初めは 0 = 始発駅)なので、途中から始めたとき別の場所を見て待たせていた
-  for (const sp of dp.spans(m - L / 2 - 5, m + L / 2 + 5)) { if (dSecOf[sp.e] < 0) continue; for (const o of D_OCC.get(sp.e) || []) if (o.t !== t && o.t !== t.prev && !dPartner(o.t, t) && o.lo <= sp.hi && sp.lo <= o.hi) return true; if (!ho) for (const k of D_LOCK.get(sp.e) || []) if (k.t !== t && k.t !== t.prev && !dPartner(k.t, t) && k.lo <= sp.hi && sp.lo <= k.hi) return true; }   // ほかの列車が進路を取っている区間にも出さない。同じ車両の前の運用(折り返す前の列車)はふさいでいるとみなさない(消してから出すまでに1コマ空くと、そのすきに別の列車が進路を取り、何分も出られなかった)
+  for (const sp of dp.spans(m - L / 2 - 5, m + L / 2 + 5)) { if (dSecOf[sp.e] < 0) continue; for (const o of D_OCC.get(sp.e) || []) if (o.t !== t && o.t !== t.prev && !dPartner(o.t, t) && o.lo <= sp.hi && sp.lo <= o.hi) return true; for (const k of D_LOCK.get(sp.e) || []) if (k.t !== t && k.t !== t.prev && !dPartner(k.t, t) && k.lo <= sp.hi && sp.lo <= k.hi && !(ho && k.t.dLocks && k.t.dLocks.get(k.j) === 2)) return true; }   // ほかの列車が進路を取っている区間にも出さない。同じ車両の前の運用(折り返す前の列車)はふさいでいるとみなさない(消してから出すまでに1コマ空くと、そのすきに別の列車が進路を取り、何分も出られなかった)
   return false;
 }
 function dispKill(t) { t.dVO = null; t.dEntLim = null; if (t.dLocks) dUnlockAll(t); t.ph = null; t.dStill = false; t.dHi = null; t.dHiR = null; }   // dHi(いちばん進んだ位置)も消す: 残すと、時刻を戻した・1日が一周したあと、現れた列車が前の回の位置へ飛ぶ
 // ===== 待避: 時刻表で、ある駅に止まっている間に後ろの列車が通る(追い抜く)なら、その列車が通り過ぎるまで発車しない =====
 const D_SWAP = (DC.dispatch && DC.dispatch.swapAfter) || 300;
+let D_AUTO = !!(DC.dispatch && DC.dispatch.autoReorder);   // 走っている間に順序を自動で変える(遅れた相手を待たずに先に行く・待避をやめる)。既定は切 = 固定の順序(手で変える)
+const D_DEADLOG = new Set();   // 行き詰まりで順序を変えた組(運転の記録に1回だけ出す)
+function dDeadLog(t, o, where) { const k = t.no + '>' + o.no; if (D_DEADLOG.has(k)) return; D_DEADLOG.add(k); dEvent(D_NOW, t, 'wait', `行き詰まり: ${o.no} がこの列車を待っているので先に出しました(${where})`); }
 const D_WAITMAX = D_SWAP;   // 待避で、時刻表の発車からこれ以上は待たない(秒)   // 追い抜く列車の通過が、待避する列車の発車時刻よりこれ以上遅れそうなら、順序を変えて先に出す(秒)
 function dKnT(o, s) { const K = o.kn; if (!K || !K.length) return NaN; if (s <= K[0].d) return K[0].t; for (let i = 0; i + 1 < K.length; i++) { const a = K[i], b = K[i + 1]; if (s >= a.d && s <= b.d) return b.d > a.d ? a.t + (b.t - a.t) * (s - a.d) / (b.d - a.d) : b.t; } return K[K.length - 1].t; }
 const D_BI = new Set();
+let D_SGLN = 0;   // 単線のまとまりの数
 // ===== 計画の秒の割り振り直し =====
 // 時刻表は分単位。計画(ttcore)は着を「分+10〜25秒」、発を「分+35秒」のように決めているので、駅間が1分の普通は35秒で走る計画になり、物理的に走れない。
 // 区間の中の停車駅について、時刻表の分(計画の秒の分)の中で、加速・ブレーキ・制限速度から求めた最短の走行時間で走れる秒に直す。
@@ -1279,13 +1415,68 @@ function dSpawnQ(list) {
   for (const t of list) { if (t.prev || !t.route || t.unit || t.cut || t.yard || !t.sd) continue; const dp = dPrep(t), m = dp.s2m(t.sd[0]), L = dLen(t);
     for (const sp of dp.spans(m - L / 2 - 5, m + L / 2 + 5)) { if (dSecOf[sp.e] < 0) continue; if (!D_SPAWNQ.has(sp.e)) D_SPAWNQ.set(sp.e, []); D_SPAWNQ.get(sp.e).push({ t, lo: sp.lo, hi: sp.hi }); } }
 }
+// ===== 乗降客数と停車時間(tools/patch_crowd.py) =====
+const D_PAX = (/*PAX*/ null) || null;
+let D_CROWD = !!D_PAX;   // 画面の「乗降客数で停車時間」
+const D_PAXCFG = Object.assign({
+  // 1日の乗降のうち、その時(時)の1時間に乗り降りする割合(推定。平日は朝夕の山、土休日はなだらか)
+  wd: { 4: 0.2, 5: 1.2, 6: 4.5, 7: 10.5, 8: 11.0, 9: 7.0, 10: 5.0, 11: 4.5, 12: 4.5, 13: 4.5, 14: 4.5, 15: 5.0, 16: 5.5, 17: 7.5, 18: 8.0, 19: 6.5, 20: 5.0, 21: 4.0, 22: 3.0, 23: 1.8, 24: 0.8, 25: 0.2 },
+  hd: { 4: 0.2, 5: 0.8, 6: 2.5, 7: 4.5, 8: 6.0, 9: 7.0, 10: 7.5, 11: 7.5, 12: 7.0, 13: 7.0, 14: 7.0, 15: 7.0, 16: 7.0, 17: 7.0, 18: 6.5, 19: 5.5, 20: 4.5, 21: 3.5, 22: 2.5, 23: 1.5, 24: 0.7, 25: 0.2 },
+  upAM: 0.6, downPM: 0.6,   // 平日 6〜9時台は上り、17〜20時台は下りに多い(それ以外は半分ずつ)
+  door: 3, secPer: 1.2, crowdAt: 15, crowdMul: 1.5, base: 10, gapMax: 1200
+}, (DC.dispatch && DC.dispatch.pax) || {});
+const D_LASTDEP = new Map();   // 駅|向き → 最後に発車した秒(実際)
+const D_PAXQ = new Map();      // 駅|向き → 止まる列車の時刻表の発車(秒、昇順)
+let D_CROWDSTAT = { n: 0, sum: 0, max: 0 };
+function dPaxKey(t, st) { if (!t.route || !t.sd || t.sd[st.k] == null) return null; const g = segAt(t.route, t.sd[st.k]); return st.name + '|' + dDn(g.e * 2 + g.d); }
+function dPaxRate(name, dn, T) {   // その方向の客(人/秒)
+  const R = D_PAX && D_PAX.駅 && D_PAX.駅[name]; if (!R) return 0;
+  const C = D_PAXCFG, prof = C[D_DAY === 'hd' ? 'hd' : 'wd'], h = Math.max(4, Math.min(25, Math.floor(T / 3600)));
+  let tot = 0; for (const k in prof) tot += prof[k];
+  const sh = D_DAY !== 'hd' && h >= 6 && h <= 9 ? (dn ? 1 - C.upAM : C.upAM) : D_DAY !== 'hd' && h >= 17 && h <= 20 ? (dn ? C.downPM : 1 - C.downPM) : 0.5;
+  return R / 2 * (prof[h] || 0) / tot / 3600 * sh;
+}
+function dPaxSec(t, name, dn, T, gap, mul) {   // その間隔で待っていた客の乗り降りにかかる秒(mul = 客の倍率: JR の振替輸送など)
+  const C = D_PAXCFG, n = 2 * dPaxRate(name, dn, T) * (mul || 1) * Math.max(0, Math.min(gap, C.gapMax)), doors = Math.max(1, (t.cars || 8) * C.door), per = n / doors;
+  return C.base + per * C.secPer * (per > C.crowdAt ? C.crowdMul : 1);
+}
+function dPaxNeed(t, st, arrT) {   // 着いたときに、要る停車の秒(0 = 時刻表どおり)
+  if (!D_CROWD || !D_PAX || st.thru || st.k == null) return 0;
+  const i = st.k - t.k0; if (i <= 0 || i >= t.names.length - 1 || t.yard || t.unit || t.cut || t.dh) return 0;
+  const key = dPaxKey(t, st); if (!key) return 0; const dn = key.endsWith('|1');
+  const q = D_PAXQ.get(key); let pv = -Infinity; if (q) { let lo = 0, hi = q.length; while (lo < hi) { const m = (lo + hi) >> 1; if (q[m] < st.P - 0.5) lo = m + 1; else hi = m; } if (lo > 0) pv = q[lo - 1]; }
+  const gS = isFinite(pv) ? st.P - pv : D_PAXCFG.gapMax, last = D_LASTDEP.get(key), gA = last != null && last < arrT ? arrT - last : gS;
+  const rS = dPaxSec(t, st.name, dn, st.P, gS), rA = dPaxSec(t, st.name, dn, arrT, gA, typeof dIncPaxMul === 'function' ? dIncPaxMul(st.name, arrT) : 1), dwS = Math.max(0, st.P - st.A);
+  return Math.min(dwS, rS) + Math.max(0, rA - rS);
+}
+function dPaxPlan(list) {   // dispPlan で: 駅|向きごとの時刻表の発車
+  D_PAXQ.clear(); D_LASTDEP.clear(); D_CROWDSTAT = { n: 0, sum: 0, max: 0 };
+  for (const t of list) { if (!t.route || !t.sd || t.yard || t.unit || t.cut || t.dh) continue;
+    t.names.forEach((nm, i) => { const ev = t.ev[i]; if (!ev || ev.thru || i === t.names.length - 1) return; const k = i + t.k0; if (t.sd[k] == null) return; const g = segAt(t.route, t.sd[k]); if (dSecOf[g.e] < 0) return;
+      const key = nm + '|' + dDn(g.e * 2 + g.d); if (!D_PAXQ.has(key)) D_PAXQ.set(key, []); D_PAXQ.get(key).push(t.P[k]); }); }
+  for (const [, q] of D_PAXQ) q.sort((a, b) => a - b);
+}
+let D_REC = null;   // 基準の走りの記録 { n: Map(鍵 → 分岐を通った秒), e: Map(鍵 → 区間に入った秒), w: Map(鍵 → 1 待避した / 0 待たずに出た) }(src/fixload.js が入れる)
+const dRecKey = o => typeof ttUKey === 'function' ? ttUKey(o) : o.no;
+function dRecApply() {   // dispPlan の最後: 鍵を付け、記録があれば時刻と待避を置き換える
+  const R = D_REC; let nN = 0, nE = 0, nW = 0;
+  for (const [nd, q] of D_NODEQ) for (const c of q) { if (c.key == null) continue; const v = R && R.n.get(c.key); if (v != null) { c.T0 = c.T; c.T = v; c.R = true; nN++; } }
+  for (const [, q] of D_NODEQ) q.sort((a, b) => a.T - b.T);
+  for (const c of D_ENTQ) { const v = R && R.e.get(c.key); if (v != null) { c.T0 = c.T; c.T = v; c.R = true; nE++; } }
+  D_ENTQ.sort((a, b) => a.T - b.T);
+  if (R) for (const t of dRecList) { if (!t.dWait) continue; for (const ks of Object.keys(t.dWait)) { const w = t.dWait[ks].filter(c => R.w.get(dRecKey(t) + '|' + ks + '|' + dRecKey(c.o)) !== 0); nW += t.dWait[ks].length - w.length; if (w.length) t.dWait[ks] = w; else delete t.dWait[ks]; } if (!Object.keys(t.dWait).length) t.dWait = null; }
+  D_REC_STAT = R ? { node: nN, ent: nE, waitDrop: nW } : null;
+}
+let dRecList = [], D_REC_STAT = null;
 function dispPlan(list) {
+  dRecList = list;
   // 計画で通る向きを通れるようにして、つながりと信号機の推定を作り直す
   { const n0 = D_USED.size; for (const t of list) if (t.route) for (const g of t.route.segs) if (dSecOf[g.e] >= 0 && !E[g.e].portal) D_USED.add(g.e * 2 + g.d);
     if (D_USED.size !== n0) { dBuildPred(); for (const sec of DSEC) { sec.entries = []; } dRebuildSignals(list); dSigCheck(); } }
   if (D_RETIME) D_RETIME_STAT = dRetime(list);
   dSpawnQ(list);
   const bySt = new Map(), keys = new Map();
+  D_SGLN = dSglBuild(list);   // 単線のまとまり(方向てこ)
   { const dir = new Map(); D_BI.clear();
     for (const o of list) { if (!o.route) continue; const sg = o.route.segs;
       for (let i = 0; i < sg.length; i++) { const ins = dSecOf[sg[i].e] >= 0; if (!ins) continue;
@@ -1336,13 +1527,13 @@ function dispPlan(list) {
     if (moved) { t.kn = null; t.dp = null; ttTarget(t, t.start); }
   }
   // 分岐ごとに、通る列車とその時刻(時刻表)。進路を時刻表の順に作るのに使う
-  D_NODEQ.clear();
+  D_NODEQ.clear(); const occ = new Map();
   for (const o of list) {
     if (!o.route || !o.kn || o.unit || o.cut || o.yard) continue;
     for (const g of o.route.segs) {
       if (dSecOf[g.e] < 0 || E[g.e].portal) continue; const nd = dSegEndN(g); if (nd < 0 || adj[nd].length < 3) continue;
       const T = dKnT(o, g.d1); if (isNaN(T)) continue;
-      if (!D_NODEQ.has(nd)) D_NODEQ.set(nd, []); D_NODEQ.get(nd).push({ o, d: g.d1, T });
+      if (!D_NODEQ.has(nd)) D_NODEQ.set(nd, []); const ok = dRecKey(o) + '|' + nd, oc = (occ.get(ok) || 0) + 1; occ.set(ok, oc); D_NODEQ.get(nd).push({ o, d: g.d1, T, key: ok + '|' + oc });
     }
   }
   for (const [, q] of D_NODEQ) q.sort((a, b) => a.T - b.T);
@@ -1350,16 +1541,17 @@ function dispPlan(list) {
   for (const o of list) {
     if (!o.route || !o.kn || o.unit || o.cut || o.yard) continue;
     const segs = o.route.segs; let ri = 0;
-    for (let i = 0; i < segs.length; i++) { if (dSecOf[segs[i].e] < 0 || (i > 0 && dSecOf[segs[i - 1].e] >= 0)) continue; if (i > 0) { const T = dKnT(o, segs[i].d0); if (!isNaN(T)) D_ENTQ.push({ o, ri, d: segs[i].d0, T }); } ri++; }
+    for (let i = 0; i < segs.length; i++) { if (dSecOf[segs[i].e] < 0 || (i > 0 && dSecOf[segs[i - 1].e] >= 0)) continue; if (i > 0) { const T = dKnT(o, segs[i].d0); if (!isNaN(T)) D_ENTQ.push({ o, ri, d: segs[i].d0, T, key: dRecKey(o) + '|e' + ri }); } ri++; }
   }
   D_ENTQ.sort((a, b) => a.T - b.T);
+  dRecApply(); dPaxPlan(list); if (typeof dIncReset === 'function') dIncReset();
   return n;
 }
 // 追い抜く列車がまだこの駅を通っていないか
 let D_WAITSHIFT = 0;
 function dWaiting(t, k, T) {
   const w = t.dWait && t.dWait[k]; if (!w) return null;
-  const st = t.dp.stops[k]; if (st && T > st.P + D_WAITMAX) return null;
+  const st = t.dp.stops[k]; if (D_AUTO && st && T > st.P + D_WAITMAX) return null;
   for (const c of w) {
     const o = c.o; if (T > o.end + 5 && !o.ph) continue; if (o.sv != null && o.s > c.sX + 12) continue; if (T < o.start - 900) continue;
     // 追い抜く列車が大きく遅れているなら、待たずに先に出す(順序変更)
@@ -1367,11 +1559,12 @@ function dWaiting(t, k, T) {
     let eta;
     if (o.sv != null) { eta = T + Math.max(0, dKnT(o, c.sX) - dKnT(o, o.s)); if (o.ph && o.ph.mode === 'run' && o.ph.v < 0.1) eta += Math.min(o.ph.waitT, D_SWAP); }
     else eta = c.T + Math.max(0, T - o.start);
-    if (eta > (st ? st.P : T) + D_SWAP) continue;
+    if (D_AUTO && eta > (st ? st.P : T) + D_SWAP) continue;
     // 抜く列車が(前の列車などを介して)この列車にふさがれているなら、待つと動けなくなるので先に出す
     let x = o, dead = false;
-    for (let g = 0; g < 10 && x && !dead; g++) { const nx = x.dByT || (x.ph && x.ph.v < 0.1 ? x.ph.obsT || x.ph.waitFor : null); if (nx === t || (nx && dPartner(nx, t))) dead = true; x = nx === x ? null : nx; }
-    if (dead) continue;
+    for (let g = 0; g < 10 && x && !dead; g++) { const xp = x.ph, xs = xp && xp.mode === 'dwell' && x.dp && x.dp.stops[xp.k], idle = xp && (xp.v >= 0.1 || (xs && T < xs.P));   // 走っている・発車時刻前の停車中は、ふさがれていない
+      const nx = idle ? null : x.dByT || (xp && xp.v < 0.1 ? xp.obsT || xp.waitFor : null); if (nx === t || (nx && dPartner(nx, t))) dead = true; x = nx === x ? null : nx; }
+    if (dead) { if (!D_AUTO) dDeadLog(t, o, '待避'); continue; }
     return o;
   }
   return null;

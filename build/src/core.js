@@ -63,6 +63,9 @@ const EXITS = {};
 D.exits.forEach(([n, name]) => { (EXITS[name] = EXITS[name] || new Set()).add(n); });
 
 const REVERSE = 250;    // 駅での折り返し(スイッチバック)のコスト
+// 検車区の入出庫線・車庫の線(両端がこの範囲の中のエッジ)は、ほかに道があればそちらを通る(金沢文庫: 入出庫線 y=524 と金沢検車区)
+const DEPOT_BOX = [[466, 476, 627, 529.5]], DEPOT_PEN = 20;
+E.forEach(e => { if (!e.portal && DEPOT_BOX.some(([x0, y0, x1, y1]) => [N[e.a], N[e.b]].every(q => q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1))) e.depot = true; });
 const WRONG_WAY = 4;   // 逆線走行のコスト倍率(左側通行を優先)
 const paramOf = (e, x) => (x - N[E[e].a].x) / (N[E[e].b].x - N[E[e].a].x);
 const pointOn = (e, t) => ({ x: N[E[e].a].x + (N[E[e].b].x - N[E[e].a].x) * t, y: N[E[e].a].y + (N[E[e].b].y - N[E[e].a].y) * t });
@@ -72,7 +75,7 @@ function edgeCost(f, d, frac) {
   if (e.portal) return 0.01;
   const s = d ? -1 : 1;
   const wrong = e.dir && Math.sign(s * e.vx) === -e.dir;
-  return e.len * frac * (wrong ? WRONG_WAY : 1) * (e.lane && e.lane !== 'x' && ROUTE_CLS && e.lane !== ROUTE_CLS ? LANE_PEN : 1) + (e.lane === 'x' && ROUTE_CLS ? LANE_SWITCH * frac : 0) + (e.lane && e.lane !== 'x' && ROUTE_CLS && e.lane !== ROUTE_CLS && !isNaN(stopX[f]) ? 45 * frac : 0) + (e.po && ROUTE_NAMES && !ROUTE_NAMES.has(e.po) ? 40 * frac : 0);
+  return e.len * frac * (wrong ? WRONG_WAY : 1) * (e.depot ? DEPOT_PEN : 1) * (e.lane && e.lane !== 'x' && ROUTE_CLS && e.lane !== ROUTE_CLS ? LANE_PEN : 1) + (e.lane === 'x' && ROUTE_CLS ? LANE_SWITCH * frac : 0) + (e.lane && e.lane !== 'x' && ROUTE_CLS && e.lane !== ROUTE_CLS && !isNaN(stopX[f]) ? 45 * frac : 0) + (e.po && ROUTE_NAMES && !ROUTE_NAMES.has(e.po) ? 40 * frac : 0);
 }
 
 class Heap {
@@ -287,6 +290,7 @@ const SIDINGS = new Map();
     const r = findRoute({ e, t: atA ? 0 : 1 }, [allStops], null, null, false);
     if (r.fail || r.total < 25 || r.total > 130) return;
     const name = ST[edgeStation[r.segs[r.segs.length - 1].e]].name;
+    if (ST.some(s => s.name !== name && (s.plats || []).some(p => N[n].x >= p[0] - 8 && N[n].x <= p[2] + 8 && N[n].y >= p[1] - 6 && N[n].y <= p[3] + 6))) return;   // 別の駅のホームのすぐ横の行き止まり(図でホームの手前で切れた線。逗子・葉山)は引上線にしない
     const trim = Math.min(8, E[e].len * 0.8), f = trim / E[e].len;
     if (!SIDINGS.has(name)) SIDINGS.set(name, []);
     SIDINGS.get(name).push({ node: n, e, t: atA ? f : 1 - f, trim, set: new Set([n]) });
@@ -294,9 +298,9 @@ const SIDINGS = new Map();
   });
 }
 // 検車区(車庫の線を1本ずつ使って、1日の始まり・終わりの列車を並べる駅)。車庫の線 = ホームから直接は行けず、ホームの先の引上線(hs)で折り返して入る行き止まり
-const YARD_ST = new Set(['西馬込', '神奈川新町', '金沢文庫']);
+const YARD_ST = new Set(['西馬込', '神奈川新町', '金沢文庫', '京急久里浜']);
 // plat: 引上線を使わず、ホームで向きを変えて車庫の線と行き来する駅。box = 車庫の線の行き止まりがある範囲 [x0, y0, x1, y1]
-const YARD_CFG = { '金沢文庫': { box: [590, 494, 606, 530], plat: true } };
+const YARD_CFG = { '金沢文庫': { box: [[552, 478, 626, 529], [398, 555, 406, 590]], plat: true }, '京急久里浜': { hsBox: [[55, 833, 65, 840]], mid: true, lead: 1.0 } };   // 京急久里浜 = 久里浜検車区(北久里浜〜京急久里浜の間)は入出庫線の北久里浜方の端で向きを変える(引上線と同じ扱い。hsBox = 向きを変えてよい行き止まりの範囲)
 const YARDS = new Map();
 function yardOf(name) {
   if (YARDS.has(name)) return YARDS.get(name);
@@ -308,13 +312,13 @@ function yardOf(name) {
     const dead = []; N.forEach((q, n) => { if (adj[n].length === 1 && !special.has(n) && isNaN(stopX[adj[n][0]]) && Math.abs(q.x - cx) < 260 && Math.abs(q.y - cy) < 160) dead.push(n); });
     const hs = [], rest = [], yc = YARD_CFG[name];
     if (yc && yc.plat) {   // ホームで向きを変える検車区: 範囲の中の行き止まりが車庫の線
-      const [x0, y0, x1, y1] = yc.box, tracks = [];
-      for (const n of dead) { const q = N[n]; if (q.x < x0 || q.x > x1 || q.y < y0 || q.y > y1 || E[adj[n][0]].len < 12) continue; tracks.push({ node: n, e: adj[n][0], len: E[adj[n][0]].len, via: [], y: q.y }); }
+      const boxes = Array.isArray(yc.box[0]) ? yc.box : [yc.box], tracks = [];   // box は1つか、[[x0,y0,x1,y1], ..](金沢文庫 = 金沢検車区と上大岡方の留置線)
+      for (const n of dead) { const q = N[n]; if (!boxes.some(([x0, y0, x1, y1]) => q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) || E[adj[n][0]].len < 12) continue; tracks.push({ node: n, e: adj[n][0], len: E[adj[n][0]].len, via: [], y: q.y }); }
       tracks.sort((a, b) => b.y - a.y || a.node - b.node); tracks.forEach((t, i) => { t.i = i; t.label = '車庫' + (i + 1) + '番'; });
       Y = tracks.length ? { name, hs: [], tracks, pos, plat: true, pm } : null;
       YARDS.set(name, Y); return Y;
     }
-    for (const n of dead) { const e = adj[n][0], r = findRoute({ e, t: E[e].a === n ? 0 : 1 }, [pm], null, null, false); if (!r.fail && r.total >= 60 && r.total <= 220) hs.push(Object.assign(pos(n, Math.min(8, E[e].len * 0.8)), { dist: r.total })); else if (r.fail || r.total > 220) rest.push(n); }
+    for (const n of dead) { const e = adj[n][0], r = findRoute({ e, t: E[e].a === n ? 0 : 1 }, [pm], null, null, false); if (yc && yc.hsBox && !yc.hsBox.some(([x0, y0, x1, y1]) => N[n].x >= x0 && N[n].x <= x1 && N[n].y >= y0 && N[n].y <= y1)) { rest.push(n); continue; } if (!r.fail && r.total >= 60 && r.total <= 220) hs.push(Object.assign(pos(n, Math.min(8, E[e].len * 0.8)), { dist: r.total })); else if (r.fail || r.total > 220) rest.push(n); }
     const tracks = [];
     for (const n of rest) {
       if (E[adj[n][0]].len < 12) continue;   // 短すぎる線(安全側線など)
