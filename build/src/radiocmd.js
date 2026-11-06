@@ -37,16 +37,16 @@ const gCapOf = t => t.dyn ? t.capK : t.gCap;
 function gCmdRender() {
   const box = $('radiocmd'), c = G.cmd; if (!box) return;
   if (!c) { box.hidden = true; box.innerHTML = ''; return; }
-  const t = c.t, ah = t.ph ? dAheadStations(t, 80) : [], all = gAllStations(), ty = TYPES[t.shown || t.type];
+  const t = c.t, ah = t.ph ? dAheadStations(t, 80) : [], all = gAllStations(), atTerminal = !!(t.stayAt && t.ph && t.ph.done), ty = TYPES[t.shown || t.type];
   const opt = (L, v) => L.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('');
-  const stOpt = i => i === 0 ? ah.map(x => [x.name, x.name + (x.stop ? '' : '(通過駅)') + (dCanTurn(x.name) ? ' ⇄' : '')]) : all.map(n => [n, n + (dCanTurn(n) ? ' ⇄' : '')]);
+  const stOpt = i => i === 0 && !atTerminal ? ah.map(x => [x.name, x.name + (x.stop ? '' : '(通過駅)') + (dCanTurn(x.name) ? ' ⇄' : '')]) : all.map(n => [n, n + (dCanTurn(n) ? ' ⇄' : '')]);
   const steps = gCmdSteps(c), pre = !t.ph ? '運転指令の区間の外です' : steps.length ? dPreCheck(t, steps) : '', cap = gCapOf(t);
   const row = (r, i) => `<div class="rrow"><span>${i + 1}</span><select data-cf="to" data-ri="${i}"><option value="">駅を選ぶ</option>${opt(stOpt(i), r.to)}</select><select data-cf="type" data-ri="${i}">${opt(G_TYPES, r.type)}</select>` +
     `<select data-cf="stops" data-ri="${i}"${r.type === 'kaiso' ? ' disabled' : ''}>${opt(G_STOPS, r.stops)}</select>${i ? `<select data-cf="turn" data-ri="${i}">${opt(G_TURN, r.turn)}</select>` : ''}${c.rows.length > 1 ? `<button data-cx="${i}" title="この段を消す">×</button>` : ''}</div>`;
   box.hidden = false;
   box.innerHTML = `<div class="rcmd"><div class="rcmd-hd"><b>${t.no}</b> <span style="color:${ty ? ty.color : ''}">${ty ? ty.name : ''}</span> ${shortDest(t.dest)}行き ${t.cars || ''}両<button data-cc="close" class="rcx" title="閉じる">×</button></div>` +
     `<div class="rpre">${[['cut', '次の駅で打ち切り→回送'], ['dest', '行先変更'], ['turn', '臨時折り返し'], ['kawasaki', '打ち切り→回送→折り返し'], ['local', '各停に変更'], ['back', '途中まで各停→元の種別'], ['extra', '臨時停車'], ['kaiso', '回送にする']].map(([k, n]) => `<button data-cp="${k}">${n}</button>`).join('')}</div>` +
-    `<div class="rsub">段ごとに「どこまで・種別・停車駅・(2段目から)進むか折り返すか」。⇄ = 折り返し・留置のできる駅</div>` +
+    `<div class="rsub">${atTerminal ? `${t.stayAt}に到着しています。次の行路の行先を全駅から選べます。` : '段ごとに「どこまで・種別・停車駅・(2段目から)進むか折り返すか」。'} ⇄ = 折り返し・留置のできる駅</div>` +
     c.rows.map(row).join('') +
     `<div class="rrow2"><button data-cc="add">＋ 段を足す</button><span>そのあと</span><select data-cf="after">${opt([['park', '留置線・検車区へ回送'], ['stay', 'その駅で待機']], c.after)}</select></div>` +
     `<div class="rrow2"><span>速度</span>${[[15, '15'], [25, '25'], [45, '45'], [0, '解除']].map(([v, n]) => `<button data-cs="${v}" class="${(v ? cap === v : cap == null) ? 'on' : ''}">${n}</button>`).join('')}<span>km/h</span><button data-cc="hold" class="${t.ph && t.ph.hold ? 'on' : ''}">${t.ph && t.ph.hold ? '抑止を解除' : '抑止'}</button></div>` +
