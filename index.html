@@ -107,7 +107,7 @@
 
   /* ===== 本体 ===== */
   main { flex:1; min-height:0; display:flex; gap:12px; padding:12px; }
-  main.dispatch-layout { display:grid; grid-template-columns:minmax(0, 2.1fr) minmax(300px, .9fr); grid-template-rows:minmax(170px, .62fr) minmax(280px, 1fr); gap:10px; }
+  main.dispatch-layout { display:grid; grid-template-columns:minmax(0, 2.1fr) minmax(300px, .9fr); grid-template-rows:minmax(110px, .25fr) minmax(360px, 1fr); gap:10px; }
   main.dispatch-layout > .mapwrap { grid-column:1 / -1; grid-row:1; min-height:0; }
   main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; width:auto; min-height:0; }
   main.dispatch-layout > aside { grid-column:2; grid-row:2; width:auto; min-width:0; min-height:0; overflow:auto; }
@@ -519,7 +519,7 @@
     main { flex-direction:column; }
     aside { width:100%; overflow:visible; }
     .mapwrap, .boardwrap { width:100%; }
-    main.dispatch-layout { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(220px,40vh) minmax(320px,58vh) minmax(240px,auto); }
+    main.dispatch-layout { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(120px,20vh) minmax(360px,60vh) minmax(240px,auto); }
     main.dispatch-layout > .mapwrap { grid-column:1; grid-row:1; }
     main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; }
     main.dispatch-layout > aside { grid-column:1; grid-row:3; width:100%; max-height:none; }
@@ -4134,7 +4134,8 @@ function dOrder(t, steps, T, opt = {}) {
   const st0 = p.mode === 'dwell' ? t.dp.stops[p.k] : null;
   const r = dStepRoute(t, job.steps[0], job, T, true); if (!r) return { ok: false, msg: job.err || '経路が見つかりません' };
   dRetire(t, T);
-  dRunStep(job, r, T, { prev: null, v0: p.mode === 'dwell' ? 0 : p.v, wait: st0 ? Math.max(0, (st0.P || T) - T, (p.arrT || T) + 15 - T) : 0, fromName: st0 ? st0.name : '' });
+  // 新しい指令で行路を置き換えたら、旧時刻表の発車時刻は引き継がない。実到着から最低15秒だけ停車する。
+  dRunStep(job, r, T, { prev: null, v0: p.mode === 'dwell' ? 0 : p.v, wait: st0 ? Math.max(0, (p.arrT || T) + 15 - T) : 0, fromName: st0 ? st0.name : '' });
   return { ok: true, msg: job.msg || '', job };
 }
 // 段 s の経路(いまの列車の位置から)。first = 置き換える最初の段(元の列車の経路の続きを優先)

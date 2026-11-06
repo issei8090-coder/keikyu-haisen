@@ -197,7 +197,8 @@ function dOrder(t, steps, T, opt = {}) {
   const st0 = p.mode === 'dwell' ? t.dp.stops[p.k] : null;
   const r = dStepRoute(t, job.steps[0], job, T, true); if (!r) return { ok: false, msg: job.err || '経路が見つかりません' };
   dRetire(t, T);
-  dRunStep(job, r, T, { prev: null, v0: p.mode === 'dwell' ? 0 : p.v, wait: st0 ? Math.max(0, (st0.P || T) - T, (p.arrT || T) + 15 - T) : 0, fromName: st0 ? st0.name : '' });
+  // 新しい指令で行路を置き換えたら、旧時刻表の発車時刻は引き継がない。実到着から最低15秒だけ停車する。
+  dRunStep(job, r, T, { prev: null, v0: p.mode === 'dwell' ? 0 : p.v, wait: st0 ? Math.max(0, (p.arrT || T) + 15 - T) : 0, fromName: st0 ? st0.name : '' });
   return { ok: true, msg: job.msg || '', job };
 }
 // 段 s の経路(いまの列車の位置から)。first = 置き換える最初の段(元の列車の経路の続きを優先)
