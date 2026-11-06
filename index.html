@@ -8776,7 +8776,14 @@ function dDraw(force) {
   }
   dPanel();
 }
-function dSelect(t) { dSel = t; dSelSig = null; if (t && typeof ttSelect === 'function') ttSelect(t); dDraw(true); }
+function dSelect(t) {
+  dSel = t; dSelSig = null;
+  if (t && typeof ttSelect === 'function') ttSelect(t);
+  dDraw(true);
+  // 右欄を事故・無線の下までスクロールしていると、選択した列車の詳細が見えない
+  const aside = $('dispbox') && $('dispbox').closest('aside');
+  if (aside) aside.scrollTo({ top: 0, behavior: 'smooth' });
+}
 function dSelectSig(s) { dSelSig = s; dSel = null; dDraw(true); }
 // 右側の運転指令パネル
 function dPanel() {
