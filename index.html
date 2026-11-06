@@ -111,7 +111,8 @@
   main.dispatch-layout > .mapwrap { grid-column:1 / -1; grid-row:1; min-height:0; }
   main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; width:auto; min-height:0; }
   main.dispatch-layout > aside { grid-column:2; grid-row:2; width:auto; min-width:0; min-height:0; overflow:auto; }
-  main.dispatch-layout > aside > section:not(#dispsec):not(#radiosec):not(#ttbox):not(#selbox), main.dispatch-layout > aside > details { display:none; }
+  /* Keep incident controls, radio threads, train details and other tools available in dispatch mode. */
+  main.dispatch-layout > aside { display:flex; flex-direction:column; gap:8px; }
   main.dispatch-layout #dispsec { border-left:0; min-width:0; }
   main.dispatch-layout #radiosec { min-width:0; }
   .mapwrap { flex:1; min-width:0; overflow:auto; background:var(--map-bg); border:1px solid var(--line); border-radius:var(--r); padding:10px; }
