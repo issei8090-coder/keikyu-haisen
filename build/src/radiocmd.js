@@ -11,13 +11,13 @@ function gCmdOpen(t, opt = {}) {
   const p = gDriver(t); let th = G.th.find(x => x.p === p && x.cmdTh);
   if (!th) { th = gThread(p, `${t.no} への指示`, null); th.cmdTh = true; gSay(th, `${t.no} 運転士の${p.name.split(' ')[0]}です。どうぞ。`, null, 0); }
   const ah = dAheadStations(t, 80), nx = ah.find(x => x.stop) || ah[0];
-  G.cmd = { t, th, rows: [{ to: nx ? nx.name : '', type: '', stops: 'orig', turn: '' }], after: 'park', cap: opt.cap || null, inc: opt.inc || null };
+  G.cmd = { t, th, rows: [{ to: nx ? nx.name : '', type: '', stops: 'orig', turn: '', track: '' }], after: 'park', cap: opt.cap || null, inc: opt.inc || null };
   gCmdRender(); gRender();
   const sec = $('radiosec'); if (sec && sec.scrollIntoView) sec.scrollIntoView({ block: 'nearest' });
 }
 function gCmdPreset(k) {
   const c = G.cmd, t = c.t, ah = dAheadStations(t, 80), stops = ah.filter(x => x.stop), nx = stops[0] || ah[0], last = ah[ah.length - 1], turn = ah.filter(x => dCanTurn(x.name));
-  const R = (to, type, st, tn) => ({ to: to ? to.name || to : '', type: type || '', stops: st || 'orig', turn: tn || '' });
+  const R = (to, type, st, tn) => ({ to: to ? to.name || to : '', type: type || '', stops: st || 'orig', turn: tn || '', track: '' });
   const home = t.names && t.names[0] && stByName.get(t.names[0]) && gAllStations().includes(t.names[0]) ? t.names[0] : gAllStations()[0];
   if (k === 'cut') { c.rows = [R(nx)]; c.after = 'park'; }
   else if (k === 'dest') { c.rows = [R(turn[0] || nx)]; c.after = 'stay'; }
@@ -31,7 +31,7 @@ function gCmdPreset(k) {
 }
 function gCmdSteps(c) {
   const rows = c.rows.filter(r => r.to), dest = [...rows].reverse().find(r => r.type !== 'kaiso');
-  return rows.map(r => ({ to: r.to, type: r.type || undefined, stops: r.type === 'kaiso' ? 'orig' : r.type && r.stops === 'orig' ? 'type' : r.stops, turn: r.turn === 'turn' ? true : r.turn === 'go' ? false : null, dest: dest ? dest.to : r.to }));
+  return rows.map(r => ({ to: r.to, type: r.type || undefined, stops: r.type === 'kaiso' ? 'orig' : r.type && r.stops === 'orig' ? 'type' : r.stops, turn: r.turn === 'turn' ? true : r.turn === 'go' ? false : null, track: r.track === '' || r.track == null ? '' : +r.track, dest: dest ? dest.to : r.to }));
 }
 const gCapOf = t => t.dyn ? t.capK : t.gCap;
 function gCmdRender() {
@@ -41,7 +41,7 @@ function gCmdRender() {
   const opt = (L, v) => L.map(([k, n]) => `<option value="${k}"${k === v ? ' selected' : ''}>${n}</option>`).join('');
   const stOpt = i => i === 0 && !atTerminal ? ah.map(x => [x.name, x.name + (x.stop ? '' : '(通過駅)') + (dCanTurn(x.name) ? ' ⇄' : '')]) : all.map(n => [n, n + (dCanTurn(n) ? ' ⇄' : '')]);
   const steps = gCmdSteps(c), pre = !t.ph ? '運転指令の区間の外です' : steps.length ? dPreCheck(t, steps) : '', cap = gCapOf(t);
-  const row = (r, i) => `<div class="rrow"><span>${i + 1}</span><select data-cf="to" data-ri="${i}"><option value="">駅を選ぶ</option>${opt(stOpt(i), r.to)}</select><select data-cf="type" data-ri="${i}">${opt(G_TYPES, r.type)}</select>` +
+  const row = (r, i) => `<div class="rrow"><span>${i + 1}</span><select data-cf="to" data-ri="${i}"><option value="">駅を選ぶ</option>${opt(stOpt(i), r.to)}</select><select data-cf="track" data-ri="${i}" title="進入する線を配線図の上から選択"><option value="">番線 自動</option>${dStationTracks(r.to).map(x => `<option value="${x.i}"${String(r.track) === String(x.i) ? ' selected' : ''}>${x.label}</option>`).join('')}</select><select data-cf="type" data-ri="${i}">${opt(G_TYPES, r.type)}</select>` +
     `<select data-cf="stops" data-ri="${i}"${r.type === 'kaiso' ? ' disabled' : ''}>${opt(G_STOPS, r.stops)}</select>${i ? `<select data-cf="turn" data-ri="${i}">${opt(G_TURN, r.turn)}</select>` : ''}${c.rows.length > 1 ? `<button data-cx="${i}" title="この段を消す">×</button>` : ''}</div>`;
   box.hidden = false;
   box.innerHTML = `<div class="rcmd"><div class="rcmd-hd"><b>${t.no}</b> <span style="color:${ty ? ty.color : ''}">${ty ? ty.name : ''}</span> ${shortDest(t.dest)}行き ${t.cars || ''}両<button data-cc="close" class="rcx" title="閉じる">×</button></div>` +
@@ -73,14 +73,14 @@ function gCmdSend() {
 { const sec = $('radiosec');
   sec.addEventListener('click', e => { const c = G.cmd; if (!c) return; const b = e.target.closest('[data-cp],[data-cx],[data-cc],[data-cs]'); if (!b) return;
     if (b.dataset.cp) gCmdPreset(b.dataset.cp);
-    else if (b.dataset.cx != null) { c.rows.splice(+b.dataset.cx, 1); if (!c.rows.length) c.rows.push({ to: '', type: '', stops: 'orig', turn: '' }); gCmdRender(); }
+    else if (b.dataset.cx != null) { c.rows.splice(+b.dataset.cx, 1); if (!c.rows.length) c.rows.push({ to: '', type: '', stops: 'orig', turn: '', track: '' }); gCmdRender(); }
     else if (b.dataset.cs != null) { const v = +b.dataset.cs || null, t = c.t; if (t.dyn) t.capK = v; else t.gCap = v; gMe(c.th, v ? `${v}km/h以下で運転してください。` : '速度の制限を解除します。'); gSay(c.th, v ? `了解、${v}km/h以下で運転します。` : '了解、制限解除。', null, gDelay(c.th.p, 10)); gCmdRender(); gRender(); }
-    else if (b.dataset.cc === 'add') { const L = c.rows[c.rows.length - 1]; c.rows.push({ to: '', type: L && L.type ? L.type : '', stops: L && L.type ? L.stops : 'orig', turn: '' }); gCmdRender(); }
+    else if (b.dataset.cc === 'add') { const L = c.rows[c.rows.length - 1]; c.rows.push({ to: '', type: L && L.type ? L.type : '', stops: L && L.type ? L.stops : 'orig', turn: '', track: '' }); gCmdRender(); }
     else if (b.dataset.cc === 'hold') { const t = c.t; if (t.ph) { t.ph.hold = !t.ph.hold; gMe(c.th, t.ph.hold ? 'その場で抑止します。' : '抑止を解除します。発車してください。'); gSay(c.th, '了解。', null, gDelay(c.th.p, 8)); } gCmdRender(); gRender(); }
     else if (b.dataset.cc === 'close') { G.cmd = null; gCmdRender(); }
     else if (b.dataset.cc === 'go') gCmdSend(); });
   sec.addEventListener('change', e => { const c = G.cmd, x = e.target.closest('[data-cf]'); if (!c || !x) return; const f = x.dataset.cf;
-    if (f === 'after') c.after = x.value; else { const r = c.rows[+x.dataset.ri]; if (!r) return; r[f] = x.value; if (f === 'type' && x.value) r.stops = x.value === 'local' ? 'all' : 'type'; }
+    if (f === 'after') c.after = x.value; else { const r = c.rows[+x.dataset.ri]; if (!r) return; r[f] = x.value; if (f === 'to') r.track = ''; if (f === 'type' && x.value) r.stops = x.value === 'local' ? 'all' : 'type'; }
     gCmdRender(); });
 }
 { const f = gReset; gReset = function () { G.cmd = null; gCmdRender(); if (typeof dynReset === 'function') dynReset(); return f.apply(this, arguments); }; }

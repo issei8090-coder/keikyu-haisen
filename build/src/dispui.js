@@ -558,7 +558,8 @@ dTabs.forEach((tb, i) => { const b = document.createElement('button'), sp = tb.n
 function dSetView(v) {
   dView = v;
   $('vmap').classList.toggle('on', v === 'map'); $('vdisp').classList.toggle('on', v === 'disp');
-  document.querySelector('.mapwrap').hidden = v !== 'map'; $('boardwrap').hidden = v !== 'disp'; $('dispsec').hidden = v !== 'disp';
+  const main = document.querySelector('main'); if (main) main.classList.toggle('dispatch-layout', v === 'disp');
+  document.querySelector('.mapwrap').hidden = false; $('boardwrap').hidden = v !== 'disp'; $('dispsec').hidden = v !== 'disp';
   if (v === 'disp') dBuildBoard();
 }
 $('vmap').onclick = () => dSetView('map'); $('vdisp').onclick = () => dSetView('disp');

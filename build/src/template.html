@@ -107,6 +107,13 @@
 
   /* ===== 本体 ===== */
   main { flex:1; min-height:0; display:flex; gap:12px; padding:12px; }
+  main.dispatch-layout { display:grid; grid-template-columns:minmax(0, 2.1fr) minmax(300px, .9fr); grid-template-rows:minmax(170px, .62fr) minmax(280px, 1fr); gap:10px; }
+  main.dispatch-layout > .mapwrap { grid-column:1 / -1; grid-row:1; min-height:0; }
+  main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; width:auto; min-height:0; }
+  main.dispatch-layout > aside { grid-column:2; grid-row:2; width:auto; min-width:0; min-height:0; overflow:auto; }
+  main.dispatch-layout > aside > section:not(#dispsec):not(#radiosec):not(#ttbox):not(#selbox), main.dispatch-layout > aside > details { display:none; }
+  main.dispatch-layout #dispsec { border-left:0; min-width:0; }
+  main.dispatch-layout #radiosec { min-width:0; }
   .mapwrap { flex:1; min-width:0; overflow:auto; background:var(--map-bg); border:1px solid var(--line); border-radius:var(--r); padding:10px; }
   svg#map { display:block; width:100%; min-width:900px; height:auto; cursor:crosshair; user-select:none; }
   .zoom { position:sticky; top:0; left:0; height:0; z-index:3; }
@@ -512,6 +519,10 @@
     main { flex-direction:column; }
     aside { width:100%; overflow:visible; }
     .mapwrap, .boardwrap { width:100%; }
+    main.dispatch-layout { display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(220px,40vh) minmax(320px,58vh) minmax(240px,auto); }
+    main.dispatch-layout > .mapwrap { grid-column:1; grid-row:1; }
+    main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; }
+    main.dispatch-layout > aside { grid-column:1; grid-row:3; width:100%; max-height:none; }
     .status kbd { display:none; }
     h1 small { display:none; }
   }
