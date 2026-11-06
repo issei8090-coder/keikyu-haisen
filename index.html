@@ -8493,6 +8493,17 @@ function dTabGeom(tb) {
 dTabs.forEach(dTabGeom);
 const gB = { static: null, lock: null, occ: null, sig: null, lab: null };
 const dSigEl = new Map();
+// Train labels are drawn above signals. When their hit area overlaps a signal, prefer the signal.
+function dSelectSigAt(x, y) {
+  let best = null, bd = 19;
+  for (const [s, o] of dSigEl) {
+    const r = o.g.getBoundingClientRect();
+    const dx = Math.max(r.left - x, 0, x - r.right), dy = Math.max(r.top - y, 0, y - r.bottom), d = Math.hypot(dx, dy);
+    if (d < bd) { best = s; bd = d; }
+  }
+  if (!best) return false;
+  dSelectSig(best); return true;
+}
 function dBuildBoard() {
   const tb = dTabs[dTab], sec = DSEC[tb.si];
   board.innerHTML = ''; dSigEl.clear();
@@ -8751,7 +8762,7 @@ function dDraw(force) {
     if (t.yard && !t.ph) { const bb = g.getBBox(); if (bb.width + bb.height > 0) {
       const fr0 = dp.spans(0, Math.min(dp.total, 5))[0], g0 = fr0 && t.route.segs[fr0.i], e0 = fr0 && E[fr0.e], right = !g0 || (g0.t1 > g0.t0) === (dKm[e0.b] > dKm[e0.a]);
       const yl = el('text', { x: right ? bb.x - 4 : bb.x + bb.width + 4, y: bb.y + bb.height / 2 + 3.4, class: 'bk-yardl' + (t === dSel ? ' sel' : ''), 'text-anchor': right ? 'end' : 'start', fill: ty.color }, gB.lab, t.no || TYPES[t.type].short);
-      yl.addEventListener('click', ev => { ev.stopPropagation(); dSelect(t); }); } continue; }
+      yl.addEventListener('click', ev => { ev.stopPropagation(); if (!dSelectSigAt(ev.clientX, ev.clientY)) dSelect(t); }); } continue; }
     // ラベルは先頭の位置に
     const fr = dp.spans(m + L / 2 - 1, m + L / 2).pop(); if (!fr) continue;
     const e = E[fr.e], f = (fr.lo + fr.hi) / 2 / dEm[fr.e], km = dKm[e.a] + (dKm[e.b] - dKm[e.a]) * f, by = dBy[e.a] + (dBy[e.b] - dBy[e.a]) * f;
@@ -8759,7 +8770,7 @@ function dDraw(force) {
     const g0 = t.route.segs[fr.i], right = (g0.t1 > g0.t0) === (dKm[e.b] > dKm[e.a]);
     labs.push({ t, x: tb.X(km, dSecOf[fr.e]), y: tb.Y(by, dSecOf[fr.e]), right, ty });
   }
-  if (dOcc) el('path', { d: dOcc, class: 'bk-occb' }, gB.lock);
+  if (dOcc) { const q = el('path', { d: dOcc, class: 'bk-occb' }, gB.lock); el('title', {}, q, '在線・防護区間(列車の位置から自動表示)'); }
   // ラベルの重なりを上下にずらす
   labs.sort((a, b) => a.x - b.x);
   const placed = [], CW = 6.4;   // 札の文字1つの幅(px、数字・英字)
@@ -8781,7 +8792,7 @@ function dDraw(force) {
     if (spt) { el('text', { x: tx, y: 3.8, class: 'bk-labv' }, g, spt); }
     if (lt) el('text', { x: x0 + w - 6, y: 3.8, class: 'bk-late', 'text-anchor': 'end' }, g, lt);
     el('title', {}, g, `${no}${spt ? '・' + spt + 'km/h' : ''}${lt ? '・遅れ ' + lt.slice(1) : ''}`);
-    g.addEventListener('click', ev => { ev.stopPropagation(); dSelect(t); });
+    g.addEventListener('click', ev => { ev.stopPropagation(); if (!dSelectSigAt(ev.clientX, ev.clientY)) dSelect(t); });
   }
   // 信号機の現示
   const blink = Math.floor(Date.now() / 375) % 2 === 0;
