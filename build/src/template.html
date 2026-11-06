@@ -96,6 +96,11 @@
   .pop label small { display:block; color:var(--sub); font-size:11px; }
   .pop label.sel { align-items:center; justify-content:space-between; }
   .pop label.sel select { font:inherit; font-size:12px; padding:3px 6px; border:1px solid var(--line, #ccc); border-radius:6px; background:var(--surface-2, #fff); color:var(--ink); }
+  .menu .pop { max-height:calc(100vh - 100px); overflow:auto; }
+  .menu .pop #incsettings { margin:8px 0 2px; border-top:1px solid var(--line); padding-top:5px; }
+  .menu .pop #incsettings > summary { cursor:pointer; padding:6px; color:var(--ink-2); font-weight:700; font-size:12px; }
+  .menu .pop #incsettings[open] > summary { color:var(--accent); }
+  .menu .pop #incsec { padding:4px 6px 8px; max-height:55vh; overflow:auto; }
   /* 状態バー */
   .status { flex:none; display:flex; align-items:center; gap:14px; padding:4px 18px; font-size:12px; color:var(--sub); background:var(--bg); border-bottom:1px solid var(--line); min-height:26px; overflow:hidden; white-space:nowrap; }
   .status .live { display:inline-flex; align-items:center; gap:6px; color:var(--ink-2); font-weight:600; }
@@ -111,10 +116,13 @@
   main.dispatch-layout > .mapwrap { grid-column:1 / -1; grid-row:1; min-height:0; }
   main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; width:auto; min-height:0; }
   main.dispatch-layout > aside { grid-column:2; grid-row:2; width:auto; min-width:0; min-height:0; overflow:auto; }
-  /* Keep incident controls, radio threads, train details and other tools available in dispatch mode. */
+  /* Keep the dispatch and conversation panels as the focus; secondary tools stay in the map view/settings. */
   main.dispatch-layout > aside { display:flex; flex-direction:column; gap:8px; }
-  main.dispatch-layout #dispsec { border-left:0; min-width:0; }
-  main.dispatch-layout #radiosec { min-width:0; }
+  main.dispatch-layout > aside > section:not(#dispsec):not(#radiosec), main.dispatch-layout > aside > details { display:none; }
+  main.dispatch-layout #dispsec { border-left:0; min-width:0; flex:none; max-height:44%; overflow:auto; }
+  main.dispatch-layout #radiosec { min-width:0; min-height:180px; flex:1 1 0; display:flex; flex-direction:column; overflow:hidden; }
+  main.dispatch-layout #radiosec #radiocmd { flex:none; max-height:52%; overflow:auto; }
+  main.dispatch-layout #radiobox { min-height:0; flex:1 1 0; overflow:auto; }
   .mapwrap { flex:1; min-width:0; overflow:auto; background:var(--map-bg); border:1px solid var(--line); border-radius:var(--r); padding:10px; }
   svg#map { display:block; width:100%; min-width:900px; height:auto; cursor:crosshair; user-select:none; }
   .zoom { position:sticky; top:0; left:0; height:0; z-index:3; }
@@ -524,6 +532,10 @@
     main.dispatch-layout > .mapwrap { grid-column:1; grid-row:1; }
     main.dispatch-layout > .boardwrap { grid-column:1; grid-row:2; }
     main.dispatch-layout > aside { grid-column:1; grid-row:3; width:100%; max-height:none; }
+    main.dispatch-layout #dispsec { max-height:none; overflow:visible; }
+    main.dispatch-layout #radiosec { flex:none; overflow:visible; }
+    main.dispatch-layout #radiosec #radiocmd { max-height:none; }
+    main.dispatch-layout #radiobox { max-height:60vh; }
     .status kbd { display:none; }
     h1 small { display:none; }
   }
@@ -608,7 +620,7 @@
     </section>
     <section>
       <h2>在線列車 <span class="n"><span id="count">0</span> 本</span></h2>
-      <p id="empty">まだ列車がいません。上の時刻表で平日/土休日を選ぶか、下の「列車を投入」から走らせます。</p>
+      <p id="empty">まだ列車がいません。上の時刻表で平日/土休日を選んでください。</p>
       <ul id="list"></ul>
       <ul id="ttlist"></ul>
     </section>
@@ -619,20 +631,9 @@
       <div class="btns"><button id="opsdockopen" class="primary">編集画面を開く</button></div>
       <p class="hint">編集は画面の下に広げて行います(上のバーの「運用の編集」でも開閉)。</p>
     </details>
-    <details class="card" id="addcard" open>
-      <summary>列車を投入(手動)</summary>
-      <label class="row"><span>始発</span><select id="org"></select></label>
-      <div class="row"><span>種別</span><div id="types"></div></div>
-      <label class="row"><span>行先</span><select id="dst"></select></label>
-      <label class="row"><span>到着後</span><select id="after"><option value="stay">ホームに停車したまま</option><option value="remove">消去する(入庫扱い)</option></select></label>
-      <button id="go" class="primary">投入</button>
-      <p id="msg"></p>
-      <div class="btns"><button id="demo">デモ列車を投入</button><button id="clear" class="danger">手動列車を消去</button></div>
-      <label class="subrow">手動列車の速さ <input id="speed" type="range" min="-2" max="3" step="0.5" value="0"><span id="speedv">×1</span></label>
-    </details>
     <details class="card" id="helpcard">
       <summary>使い方</summary>
-      <p class="hint">上の時刻表で平日/土休日を選ぶと、2025年京急全線時刻表どおりに列車が走ります(スライダーで時刻を移動、列車をクリックすると時刻を表示)。手動投入は、図の線路をクリックするとその位置から投入できます(ホーム付近は停止位置に吸着)。列車をクリックすると選択され、行先変更・折り返し・抑止・削除ができます。※ と # は次の段への接続です。泉岳寺では都営浅草線(押上方面)からの列車が京急本線と西馬込方面に分かれます。始発・行先に「都営浅草線」を選ぶと直通列車になります。</p>
+      <p class="hint">上の時刻表で平日/土休日を選ぶと、2025年京急全線時刻表どおりに列車が走ります。スライダーで時刻を移動し、列車を選ぶと詳細を確認できます。「運転指令」では列車への指示、信号・在線・確保された進路、運転士や各指令との無線連絡を扱います。※ と # は路線の接続です。</p>
     </details>
   </aside>
 </main>
@@ -691,7 +692,7 @@ const D = /*DATA*/;
   const menu = $('setmenu');
   document.addEventListener('click', e => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
   // 折りたたみの状態を覚える
-  ['addcard', 'helpcard'].forEach(id => { const d = $(id), v = store('kq-' + id); if (v != null) d.open = v === '1'; d.addEventListener('toggle', () => store('kq-' + id, d.open ? '1' : '0')); });
+  { const d = $('helpcard'), v = store('kq-helpcard'); if (v != null) d.open = v === '1'; d.addEventListener('toggle', () => store('kq-helpcard', d.open ? '1' : '0')); }
   // 配線図の拡大・縮小(ボタン・Ctrl+ホイール。ポインタの位置を中心に)
   const wrap = document.querySelector('.mapwrap'), map = $('map'), ZL = [1, 1.25, 1.5, 2, 2.5, 3, 4];
   let zi = Math.max(0, ZL.indexOf(+store('kq-zoom')));

@@ -13,7 +13,7 @@ svg.setAttribute('viewBox', `0 0 ${D.W} ${D.H}`);
 const defs = el('defs', {}, svg);
 const pat = el('pattern', { id: 'hatch', width: 4, height: 4, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' }, defs);
 el('line', { x1: 0, y1: 0, x2: 0, y2: 4, class: 'hatchline' }, pat);
-const gStatic = el('g', {}, svg), gRoute = el('g', {}, svg), gTrains = el('g', {}, svg), gCursor = el('g', {}, svg);
+const gStatic = el('g', {}, svg), gRoute = el('g', {}, svg), gTrains = el('g', {}, svg);
 
 D.hatch.forEach(p => el('rect', { x: p[0], y: p[1], width: p[2] - p[0] + 1, height: p[3] - p[1] + 1, class: 'hatch' }, gStatic));
 ST.forEach(s => s.plats.forEach(p => el('rect', { x: p[0], y: p[1], width: p[2] - p[0] + 1, height: p[3] - p[1] + 1, class: 'plat' }, gStatic)));
@@ -36,15 +36,11 @@ el('text', { x: 682, y: 170, class: 'note' }, gStatic, '(地平)');
 el('text', { x: 650, y: 236, class: 'note' }, gStatic, '(高架)');
 
 const routeHL = el('path', { class: 'routehl' }, gRoute);
-const cursor = el('circle', { r: 3.2, class: 'cursor', visibility: 'hidden' }, gCursor);
-const originMark = el('g', { visibility: 'hidden' }, gCursor);
-el('circle', { r: 4.5, class: 'origin' }, originMark);
-el('circle', { r: 1.4, class: 'origindot' }, originMark);
 
 // ===== 状態 =====
 const LEN = 12, VMAX = 30, ACC = 28, DWELL = 2.5, GAP = 5;
 const trains = [];
-let nextId = 1, selected = null, origin = null, running = true, speed = 1, typeKey = 'kaitoku';
+let selected = null, running = true, speed = 1;
 const LINES = [
   ['本線', '泉岳寺 品川 北品川 新馬場 青物横丁 鮫洲 立会川 大森海岸 平和島 大森町 梅屋敷 京急蒲田 雑色 六郷土手 京急川崎 八丁畷 鶴見市場 京急鶴見 花月総持寺 生麦 京急新子安 子安 神奈川新町 京急東神奈川 神奈川 横浜 戸部 日ノ出町 黄金町 南太田 井土ヶ谷 弘明寺 上大岡 屏風浦 杉田 京急富岡 能見台 金沢文庫 金沢八景 追浜 京急田浦 安針塚 逸見 汐入 横須賀中央 県立大学 堀ノ内 京急大津 馬堀海岸 浦賀'],
   ['久里浜線', '新大津 北久里浜 京急久里浜 YRP野比 京急長沢 津久井浜 三浦海岸 三崎口'],
@@ -68,18 +64,8 @@ function fillSelect(sel, withExits, first) {
     sel.appendChild(g);
   });
 }
-fillSelect($('org'), true, '(図の線路をクリックして指定)');
-fillSelect($('dst'), true); $('dst').value = '三崎口';
 fillSelect($('redst'), true);
-Object.entries(TYPES).forEach(([k, t]) => {
-  const b = document.createElement('button');
-  b.type = 'button'; b.className = 'chip'; b.textContent = t.name; b.dataset.k = k; b.style.setProperty('--c', t.color);
-  b.onclick = () => { typeKey = k; document.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.k === k)); };
-  if (k === typeKey) b.classList.add('on');
-  $('types').appendChild(b);
-});
 const shortDest = d => d.replace(/^(?:都営浅草線|京成線)\((.+)\)$/, '$1').replace(/^羽田空港第.*$/, m => m.includes('第3') ? '羽田空港第3T' : '羽田空港');
-function msg(t, bad) { const m = $('msg'); m.textContent = t; m.className = bad ? 'bad' : ''; }
 
 // ===== 列車 =====
 function bodyPoints(t) {
@@ -107,17 +93,6 @@ function occupied(route, s, except) {
   }
   return false;
 }
-function addTrain(route, tk, dest, after) {
-  const ty = TYPES[tk];
-  const g = el('g', { class: 'train' }, gTrains);
-  const t = { id: nextId++, type: tk, dest, after, route, s: 0, v: 0, ni: 0, state: 'run', dwell: 0, hold: false, pts: [], g,
-    casing: el('path', { class: 'casing' }, g), body: el('path', { class: 'body', stroke: ty.color }, g),
-    label: el('text', { class: 'tlabel', fill: ty.color }, g, `${ty.short} ${shortDest(dest)}`) };
-  g.addEventListener('click', ev => { ev.stopPropagation(); select(t); });
-  t.pts = bodyPoints(t);
-  trains.push(t); drawTrain(t); renderList();
-  return t;
-}
 function removeTrain(t) {
   const i = trains.indexOf(t); if (i < 0) return;
   trains.splice(i, 1); t.g.remove();
@@ -129,31 +104,6 @@ function drawTrain(t) {
   t.casing.setAttribute('d', d); t.body.setAttribute('d', d);
   const p = posAt(t.route, t.s);
   t.label.setAttribute('x', p.x); t.label.setAttribute('y', p.y - 4.5);
-}
-function bestFromStation(name, tk, dest) {
-  let best = null;
-  const starts = EXITS[name]
-    ? [...EXITS[name]].map(n => ({ e: adj[n][0], t: E[adj[n][0]].a === n ? 0 : 1 }))   // 浅草線から直通で入線
-    : stByName.get(name).stops.map(([e, x]) => ({ e, t: paramOf(e, x) }));
-  for (const st of starts) {
-    const r = plan(st, tk, dest);
-    if (r && r.total > 0.5 && !occupied(r, 0) && (!best || r.cost < best.cost)) best = r;
-  }
-  return best;
-}
-function spawn(orgName, tk, dest, after, quiet) {
-  let r = null;
-  if (orgName) {
-    if (orgName === dest) { if (!quiet) msg('始発と行先が同じです', true); return null; }
-    r = bestFromStation(orgName, tk, dest);
-  } else if (origin) {
-    r = plan(origin, tk, dest);
-    if (r && (r.total < 0.5 || occupied(r, 0))) r = null;
-  } else { if (!quiet) msg('始発駅を選ぶか、図の線路をクリックしてください', true); return null; }
-  if (!r) { if (!quiet) msg('投入できません(経路がない／その位置に列車がいます)', true); return null; }
-  const t = addTrain(r, tk, dest, after);
-  if (!quiet) msg(`${TYPES[tk].name} ${shortDest(dest)}行きを投入しました`);
-  return t;
 }
 function reroute(t, dest) {
   const loc = locate(t.route, t.s);
@@ -269,11 +219,7 @@ function updateSel() {
   $('selstops').textContent = '停車駅: ' + (t.route.stops.slice(t.ni).map(s => s.name).filter(Boolean).join(' → ') || 'なし');
   $('selstate').textContent = stateText(t);
 }
-$('go').onclick = () => spawn($('org').value, typeKey, $('dst').value, $('after').value);
-$('org').onchange = () => { if ($('org').value) { origin = null; originMark.setAttribute('visibility', 'hidden'); } };
 $('play').onclick = () => { running = !running; $('play').textContent = running ? '⏸ 一時停止' : '▶ 再開'; };
-$('speed').oninput = () => { speed = Math.pow(2, +$('speed').value); $('speedv').textContent = '×' + (speed < 1 ? speed.toFixed(2) : speed.toFixed(speed % 1 ? 1 : 0)); };
-$('clear').onclick = () => { [...trains].forEach(removeTrain); msg(''); };
 $('labels').onchange = () => svg.classList.toggle('nolabel', !$('labels').checked);
 $('hold').onclick = () => { if (selected) { selected.hold = !selected.hold; updateSel(); } };
 $('del').onclick = () => { if (selected) removeTrain(selected); };
@@ -281,52 +227,7 @@ $('rego').onclick = () => {
   if (!selected) return;
   $('selmsg').textContent = reroute(selected, $('redst').value) ? '' : 'その行先への経路がありません';
 };
-$('demo').onclick = () => {
-  [['泉岳寺', 'kaitoku', '三崎口'], ['品川', 'local', '浦賀'], ['羽田空港第1・第2ターミナル', 'kyuko', '逗子・葉山'], ['三崎口', 'tokkyu', '品川'],
-   ['京急川崎', 'local', '小島新田'], ['浦賀', 'local', '品川'], ['京急久里浜', 'kaitoku', '押上'], ['横浜', 'apkaitoku', '羽田空港第1・第2ターミナル'], ['逗子・葉山', 'kyuko', '羽田空港第1・第2ターミナル'], ['小島新田', 'local', '京急川崎']]
-    .forEach(([o, k, d]) => spawn(o, k, d, 'stay', true));
-  msg('デモ列車を投入しました');
-};
-
-// ===== 図のクリックで投入位置を指定 =====
-function svgPoint(ev) {
-  const m = svg.getScreenCTM().inverse();
-  return { x: ev.clientX * m.a + ev.clientY * m.c + m.e, y: ev.clientX * m.b + ev.clientY * m.d + m.f };
-}
-function nearestTrack(p) {
-  let best = null, bd = 9;
-  E.forEach((e, i) => {
-    if (e.portal) return;
-    const A = N[e.a];
-    let t = ((p.x - A.x) * e.vx + (p.y - A.y) * e.vy) / e.len; t = Math.max(0, Math.min(1, t));
-    const q = pointOn(i, t), d = Math.hypot(p.x - q.x, p.y - q.y);
-    if (d < bd) { bd = d; best = { e: i, t, x: q.x, y: q.y }; }
-  });
-  if (best && !isNaN(stopX[best.e]) && Math.abs(best.x - stopX[best.e]) < 8) {   // ホーム付近は停止位置に吸着
-    best.t = paramOf(best.e, stopX[best.e]); best.x = stopX[best.e];
-  }
-  return best;
-}
-svg.addEventListener('mousemove', ev => {
-  const n = nearestTrack(svgPoint(ev));
-  cursor.setAttribute('visibility', n ? 'visible' : 'hidden');
-  if (n) { cursor.setAttribute('cx', n.x); cursor.setAttribute('cy', n.y); }
-});
-svg.addEventListener('mouseleave', () => cursor.setAttribute('visibility', 'hidden'));
-svg.addEventListener('click', ev => {
-  const n = nearestTrack(svgPoint(ev));
-  if (!n) { select(null); ttSelect(null); return; }
-  origin = { e: n.e, t: n.t };
-  originMark.setAttribute('transform', `translate(${n.x} ${n.y})`); originMark.setAttribute('visibility', 'visible');
-  $('org').value = '';
-  const si = edgeStation[n.e];
-  msg(`投入位置を指定しました${si >= 0 ? '(' + ST[si].name + ')' : ''}。種別と行先を選んで「投入」`);
-});
+svg.addEventListener('click', () => { select(null); ttSelect(null); });
 renderList();
 /*TTJS*/
-if (location.hash.startsWith('#demo')) {
-  $('demo').click();
-  spawn('押上', 'kaitoku', '三崎口', 'stay', true); spawn('押上', 'local', '西馬込', 'stay', true);
-  for (let i = 0, n = 20 * (+location.hash.slice(5) || 0); i < n; i++) step(0.05);
-}
 requestAnimationFrame(frame);

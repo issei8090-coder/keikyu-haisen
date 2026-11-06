@@ -1,6 +1,6 @@
-// ===== 事故・支障の画面(運転指令の右の欄): 手動で起こす・自動(ランダム・シード)・いま起きているものの一覧と解除 =====
-{ const sec = document.createElement('section'); sec.id = 'incsec'; sec.hidden = true;
-  sec.innerHTML = `<h2>事故・支障</h2>
+// ===== 事故・支障の設定(運行設定メニュー): 手動・自動(ランダム/シード)・発生中の一覧と解除 =====
+{ const sec = document.createElement('details'); sec.id = 'incsettings';
+  sec.innerHTML = `<summary>事故・支障の設定</summary><div id="incsec"><h2>事故・支障</h2>
   <div class="incf">
     <label class="row"><span>種類</span><select id="inckind">${Object.entries(D_INCNAME).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
     <div id="incopt"></div>
@@ -14,8 +14,8 @@
     <label class="row"><span>1日の件数</span><input id="incn" type="number" min="1" max="30" value="3"></label>
     <label class="row"><span>シード</span><span class="incdur"><input id="incseed" type="number" min="1" value="1"> <button id="incseedr" title="シードを変える">別の日にする</button></span></label>
     <p class="dp-sub">シードが同じなら同じ事故(時刻・種類・場所・時間)が起きます。起きるまでは出しません。</p></div>
-  <h3 class="dp-h">起きている・起きた事故</h3><ul id="inclist" class="dp-ev"></ul>`;
-  const ds = $('dispsec'); if (ds) ds.after(sec);
+  <h3 class="dp-h">起きている・起きた事故</h3><ul id="inclist" class="dp-ev"></ul></div>`;
+  const pop = $('setmenu') && $('setmenu').querySelector('.pop'); if (pop) pop.appendChild(sec);
 }
 function dIncOpt() {
   const k = $('inckind').value, box = $('incopt'); let h = '';
@@ -60,5 +60,4 @@ function dIncList() {
   const sel = $('incsel'); if (sel) sel.textContent = dSel && dSel.ph ? '選んでいる列車: ' + dSel.no : '';
 }
 $('inclist').addEventListener('click', e => { const b = e.target.closest('[data-inc]'); if (!b) return; const o = D_INC.find(x => x.id === +b.dataset.inc); if (o) { dIncClear(o); dIncList(); } });
-dIncOpt(); setInterval(() => { if (!$('incsec').hidden) dIncList(); }, 1000);
-{ const f = dSetView; dSetView = function (v) { const r = f.apply(this, arguments); $('incsec').hidden = v !== 'disp'; dIncList(); return r; }; $('incsec').hidden = dView !== 'disp'; }
+dIncOpt(); dIncList(); setInterval(dIncList, 1000);
