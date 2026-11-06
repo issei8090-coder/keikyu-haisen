@@ -31,7 +31,12 @@ function dIncOpt() {
     <p class="dp-sub">「運行の設定」の「乗降客数で停車時間」が入っているときに効きます。</p>`; }
   box.innerHTML = h;
   if (k === 'jr') { const f = () => { const L = D_JRPRESET[$('incline').value] || [], S = [...new Set(DSEC.flatMap(s => [...s.stInfo.keys()]))]; $('incsts').innerHTML = L.filter(n => S.includes(n)).map(n => `<label class="inl"><input type="checkbox" value="${n}" checked> ${n}</label>`).join(''); }; $('incline').onchange = f; f(); }
-  if (k === 'car' || k === 'dwell') { const m = { car: 15, dwell: 5 }[k]; $('incmin').value = m; } else $('incmin').value = k === 'block' ? 45 : 60;
+  if (k === 'car' || k === 'dwell') { const m = { car: 15, dwell: 5 }[k]; $('incmin').value = m; }
+  else $('incmin').value = 60;
+  if (k === 'block') {
+    const sync = () => { const min = $('incjin').checked ? 60 : 1; $('incmin').min = min; if (+$('incmin').value < min) $('incmin').value = min; };
+    $('incjin').onchange = sync; sync();
+  } else $('incmin').min = 1;
 }
 $('inckind').onchange = dIncOpt;
 $('incgo').onclick = () => {

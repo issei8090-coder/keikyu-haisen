@@ -3821,7 +3821,13 @@ function dIncPairs() {
     for (let i = 0; i + 1 < L.length; i++) R.push({ si, sec: sec.id, a: L[i].nm, b: L[i + 1].nm, km0: L[i].km, km1: L[i + 1].km }); });
   return R;
 }
-function dIncAdd(x) { const o = Object.assign({ id: ++D_INCID, on: false, done: false, src: '手動', dur: 600 }, x); if (o.T0 == null) o.T0 = D_NOW; D_INC.push(o); return o; }
+function dIncAdd(x) {
+  const o = Object.assign({ id: ++D_INCID, on: false, done: false, src: '手動', dur: 600 }, x);
+  // 人身事故は手動・自動を問わず、発生から最低1時間は自動解除しない
+  if (o.kind === 'block' && o.jin && o.dur !== Infinity) o.dur = Math.max(3600, Number(o.dur) || 0);
+  if (o.T0 == null) o.T0 = D_NOW;
+  D_INC.push(o); return o;
+}
 function dIncClear(o) { if (!o.on) { o.done = true; o.on = false; dIncOff(o); return; } o.dur = Math.max(0, D_NOW - o.T0); }
 function dIncReset() { for (const o of D_INC) if (o.on) dIncOff(o); D_INC.length = 0; D_INCID = 0; dIncAutoGen(); }
 // 自動: その日の事故をシードから作る(時刻・種類・場所・時間)。列車は起きる時刻に走っている列車から選ぶ
@@ -9118,7 +9124,12 @@ function dIncOpt() {
     <p class="dp-sub">「運行の設定」の「乗降客数で停車時間」が入っているときに効きます。</p>`; }
   box.innerHTML = h;
   if (k === 'jr') { const f = () => { const L = D_JRPRESET[$('incline').value] || [], S = [...new Set(DSEC.flatMap(s => [...s.stInfo.keys()]))]; $('incsts').innerHTML = L.filter(n => S.includes(n)).map(n => `<label class="inl"><input type="checkbox" value="${n}" checked> ${n}</label>`).join(''); }; $('incline').onchange = f; f(); }
-  if (k === 'car' || k === 'dwell') { const m = { car: 15, dwell: 5 }[k]; $('incmin').value = m; } else $('incmin').value = k === 'block' ? 45 : 60;
+  if (k === 'car' || k === 'dwell') { const m = { car: 15, dwell: 5 }[k]; $('incmin').value = m; }
+  else $('incmin').value = 60;
+  if (k === 'block') {
+    const sync = () => { const min = $('incjin').checked ? 60 : 1; $('incmin').min = min; if (+$('incmin').value < min) $('incmin').value = min; };
+    $('incjin').onchange = sync; sync();
+  } else $('incmin').min = 1;
 }
 $('inckind').onchange = dIncOpt;
 $('incgo').onclick = () => {
